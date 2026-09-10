@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use tracing::Level;
 
 use crate::config::RuntimeConfig;
+use crate::core::notify::Notify;
 use crate::core::raft_msg::external_command::ExternalCommand;
 use crate::core::raft_msg::RaftMsg;
 use crate::core::TickHandle;
@@ -44,6 +45,13 @@ where C: RaftTypeConfig
     pub(in crate::raft) runtime_config: Arc<RuntimeConfig>,
     pub(in crate::raft) tick_handle: TickHandle<C>,
     pub(in crate::raft) tx_api: mpsc::UnboundedSender<RaftMsg<C>>,
+    /// Cloned from the `Notify` sender given to the internal `Tick` and to `RaftCore`.
+    /// Used by [`Trigger::tick`] to drive one tick from an external scheduler when
+    /// [`RuntimeConfigHandle::tick(false)`] has disabled the internal timer.
+    ///
+    /// [`Trigger::tick`]: crate::raft::trigger::Trigger::tick
+    /// [`RuntimeConfigHandle::tick(false)`]: crate::raft::RuntimeConfigHandle::tick
+    pub(in crate::raft) tx_notify: mpsc::UnboundedSender<Notify<C>>,
     pub(in crate::raft) rx_metrics: watch::Receiver<RaftMetrics<C::NodeId, C::Node>>,
     pub(in crate::raft) rx_data_metrics: watch::Receiver<RaftDataMetrics<C::NodeId>>,
     pub(in crate::raft) rx_server_metrics: watch::Receiver<RaftServerMetrics<C::NodeId, C::Node>>,

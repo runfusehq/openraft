@@ -1,5 +1,6 @@
 //! Trigger an action to RaftCore by external caller.
 
+use crate::core::notify::Notify;
 use crate::core::raft_msg::external_command::ExternalCommand;
 use crate::error::Fatal;
 use crate::raft::RaftInner;
@@ -52,6 +53,36 @@ where C: RaftTypeConfig
     /// It is not affected by `Raft::enable_heartbeat(false)`.
     pub async fn heartbeat(&self) -> Result<(), Fatal<C::NodeId>> {
         self.raft_inner.send_external_command(ExternalCommand::Heartbeat, "trigger_heartbeat").await
+    }
+
+    /// Drive one tick from an external scheduler.
+    ///
+    /// Mirrors the message shape sent by the internal `Tick::tick_loop`
+    /// (see `openraft/src/core/tick.rs`). Intended for callers that have
+    /// disabled the internal timer via
+    /// [`RuntimeConfigHandle::tick(false)`] and want to pump ticks from
+    /// their own scheduler (e.g. a per-node tick pump that fans out to
+    /// many raft groups).
+    ///
+    /// It is not affected by [`RuntimeConfigHandle::tick(false)`].
+    ///
+    /// The tick sequence number sent to `RaftCore` is always `0` on this
+    /// path — the `i` field is used only for debug tracing inside
+    /// `RaftCore` and is not load-bearing for correctness.
+    ///
+    /// Returns error when RaftCore has [`Fatal`] error, e.g. shut down or having storage error.
+    ///
+    /// [`RuntimeConfigHandle::tick(false)`]: crate::raft::RuntimeConfigHandle::tick
+    pub async fn tick(&self) -> Result<(), Fatal<C::NodeId>> {
+        let send_res = self.raft_inner.tx_notify.send(Notify::Tick { i: 0 });
+        if send_res.is_err() {
+            let fatal = self
+                .raft_inner
+                .get_core_stopped_error("sending external tick to RaftCore", Some("trigger_tick"))
+                .await;
+            return Err(fatal);
+        }
+        Ok(())
     }
 
     /// Trigger to build a snapshot at once and return at once.
