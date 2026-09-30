@@ -607,14 +607,18 @@ where
 
             tracing::debug!("backoff timeout: {:?}", sleep_duration);
 
+            // `biased`: poll the event channel before the backoff sleep, so the
+            // branch taken never depends on tokio's thread-local RNG. A
+            // deterministic simulator can then replay the order exactly.
             select! {
-                _ = sleep => {
-                    tracing::debug!("backoff timeout");
-                    return Ok(());
-                }
+                biased;
                 recv_res = recv => {
                     let event = recv_res.ok_or(ReplicationClosed::new("RaftCore closed replication"))?;
                     self.process_event(event);
+                }
+                _ = sleep => {
+                    tracing::debug!("backoff timeout");
+                    return Ok(());
                 }
             }
         }

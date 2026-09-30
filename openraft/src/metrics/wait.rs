@@ -84,11 +84,10 @@ where
             tracing::debug!(?sleep_time, "wait timeout");
             let delay = A::sleep(sleep_time);
 
+            // `biased`: poll the metrics change before the timeout, so the
+            // branch taken never depends on tokio's thread-local RNG.
             tokio::select! {
-                _ = delay => {
-                tracing::debug!( "id={} timeout wait {:} latest: {}", latest.id, msg.to_string(), latest.summary() );
-                    return Err(WaitError::Timeout(self.timeout, format!("{} latest: {}", msg.to_string(), latest.summary())));
-                }
+                biased;
                 changed = rx.changed() => {
                     match changed {
                         Ok(_) => {
@@ -106,6 +105,10 @@ where
                             return Err(WaitError::ShuttingDown);
                         }
                     }
+                }
+                _ = delay => {
+                tracing::debug!( "id={} timeout wait {:} latest: {}", latest.id, msg.to_string(), latest.summary() );
+                    return Err(WaitError::Timeout(self.timeout, format!("{} latest: {}", msg.to_string(), latest.summary())));
                 }
             };
         }
