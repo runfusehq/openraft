@@ -79,6 +79,7 @@ pub use crate::raft::runtime_config_handle::RuntimeConfigHandle;
 use crate::raft::trigger::Trigger;
 use crate::storage::RaftLogStorage;
 use crate::storage::RaftStateMachine;
+use crate::type_config::alias::InstantOf;
 use crate::type_config::alias::ResponderOf;
 use crate::type_config::alias::ResponderReceiverOf;
 use crate::type_config::alias::SnapshotDataOf;
@@ -273,6 +274,7 @@ where C: RaftTypeConfig
 
         let sm_handle = worker::Worker::spawn(state_machine, tx_notify.clone());
 
+        let clock_base = C::now();
         let core: RaftCore<C, N, LS, SM> = RaftCore {
             id: id.clone(),
             config: config.clone(),
@@ -301,6 +303,8 @@ where C: RaftTypeConfig
             command_state: CommandState::default(),
             span: core_span,
 
+            clock_base,
+
             _p: Default::default(),
         };
 
@@ -309,6 +313,7 @@ where C: RaftTypeConfig
         let inner = RaftInner {
             id,
             config,
+            clock_base,
             runtime_config,
             tick_handle,
             tx_api,
@@ -323,6 +328,13 @@ where C: RaftTypeConfig
         };
 
         Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// The instant [`RaftMetrics::quorum_acked_since_clock_base`] counts from, on this node's
+    /// runtime clock: a leader's last quorum-acknowledged instant is `clock_base() +
+    /// quorum_acked_since_clock_base`, exact however late the metrics are read.
+    pub fn clock_base(&self) -> InstantOf<C> {
+        self.inner.clock_base
     }
 
     /// Return a handle to update runtime config.

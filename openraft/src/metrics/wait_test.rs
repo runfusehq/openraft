@@ -267,6 +267,7 @@ where
 
         current_leader: None,
         millis_since_quorum_ack: None,
+        quorum_acked_since_clock_base: None,
         membership_config: Arc::new(StoredMembership::new(None, Membership::new(vec![btreeset! {}], None))),
 
         snapshot: None,

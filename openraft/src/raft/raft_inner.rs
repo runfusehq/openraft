@@ -42,6 +42,8 @@ where C: RaftTypeConfig
 {
     pub(in crate::raft) id: C::NodeId,
     pub(in crate::raft) config: Arc<Config>,
+    /// See [`Raft::clock_base`](crate::Raft::clock_base).
+    pub(in crate::raft) clock_base: crate::type_config::alias::InstantOf<C>,
     pub(in crate::raft) runtime_config: Arc<RuntimeConfig>,
     pub(in crate::raft) tick_handle: TickHandle<C>,
     pub(in crate::raft) tx_api: mpsc::UnboundedSender<RaftMsg<C>>,

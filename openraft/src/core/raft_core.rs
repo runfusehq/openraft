@@ -208,6 +208,10 @@ where
 
     pub(crate) span: Span,
 
+    /// The instant `RaftMetrics::quorum_acked_since_clock_base` counts from; shared with the
+    /// `Raft` handle (`Raft::clock_base`).
+    pub(crate) clock_base: InstantOf<C>,
+
     pub(crate) _p: PhantomData<SM>,
 }
 
@@ -556,6 +560,8 @@ where
     pub(crate) fn report_metrics(&mut self, replication: Option<ReplicationMetrics<C::NodeId>>) {
         let last_quorum_acked = self.last_quorum_acked_time();
         let millis_since_quorum_ack = last_quorum_acked.map(|t| t.elapsed().as_millis() as u64);
+        let base = self.clock_base;
+        let quorum_acked_since_clock_base = last_quorum_acked.map(|t| if t > base { t - base } else { Duration::ZERO });
 
         let st = &self.engine.state;
 
@@ -578,6 +584,7 @@ where
             state: st.server_state,
             current_leader: current_leader.clone(),
             millis_since_quorum_ack,
+            quorum_acked_since_clock_base,
             membership_config: membership_config.clone(),
 
             // --- replication ---

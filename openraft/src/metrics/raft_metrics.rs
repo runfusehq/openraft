@@ -1,4 +1,5 @@
 use std::fmt;
+use std::time::Duration;
 use std::sync::Arc;
 
 use crate::core::ServerState;
@@ -74,6 +75,14 @@ where
     /// A longer duration without acknowledgment may suggest a higher probability of the leader
     /// being partitioned from the cluster.
     pub millis_since_quorum_ack: Option<u64>,
+
+    /// For a leader, the time the most recently acknowledged timestamp was taken, as the duration
+    /// since [`Raft::clock_base`](crate::Raft::clock_base); `None` when `millis_since_quorum_ack`
+    /// is. Unlike `millis_since_quorum_ack`, it does not age with the time a reader takes to
+    /// observe the report, so `clock_base + quorum_acked_since_clock_base` is the exact instant a
+    /// lease counts from. In-process only: not serialized.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub quorum_acked_since_clock_base: Option<Duration>,
 
     /// The current membership config of the cluster.
     pub membership_config: Arc<StoredMembership<NID, N>>,
@@ -153,6 +162,7 @@ where
             state: ServerState::Follower,
             current_leader: None,
             millis_since_quorum_ack: None,
+            quorum_acked_since_clock_base: None,
             membership_config: Arc::new(StoredMembership::default()),
             replication: None,
         }
