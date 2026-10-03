@@ -217,6 +217,10 @@ where
     /// Only responses of this leader's current replication session reach it.
     pub(crate) replication_applied: BTreeMap<C::NodeId, Option<LogId<C::NodeId>>>,
 
+    /// While leading: when this leader sent the request whose response carried each target's
+    /// `replication_applied` report (fuse fork; `RaftMetrics::replication_applied_sent_since_clock_base`).
+    pub(crate) replication_applied_sent: BTreeMap<C::NodeId, InstantOf<C>>,
+
     pub(crate) _p: PhantomData<SM>,
 }
 
@@ -569,14 +573,21 @@ where
         let quorum_acked_since_clock_base = last_quorum_acked.map(|t| if t > base { t - base } else { Duration::ZERO });
         // Only a leader reports followers' applied log ids; leaving leadership forgets them, so a
         // later term starts from what its own followers report.
-        let replication_applied = match &replication {
+        let (replication_applied, replication_applied_sent_since_clock_base) = match &replication {
             Some(targets) => {
                 self.replication_applied.retain(|id, _| targets.contains_key(id));
-                Some(self.replication_applied.clone())
+                self.replication_applied_sent.retain(|id, _| targets.contains_key(id));
+                let sent = self
+                    .replication_applied_sent
+                    .iter()
+                    .map(|(id, t)| (id.clone(), if *t > base { *t - base } else { Duration::ZERO }))
+                    .collect();
+                (Some(self.replication_applied.clone()), Some(sent))
             }
             None => {
                 self.replication_applied.clear();
-                None
+                self.replication_applied_sent.clear();
+                (None, None)
             }
         };
 
@@ -607,6 +618,7 @@ where
             // --- replication ---
             replication: replication.clone(),
             replication_applied: replication_applied.clone(),
+            replication_applied_sent_since_clock_base,
         };
 
         let data_metrics = RaftDataMetrics {
@@ -1557,10 +1569,13 @@ where
             // The latest report stands, lower or not: a target that restarted from an
             // older state reports less than it did.
             if let Ok(ReplicationResult {
-                applied: Some(applied), ..
+                applied: Some(applied),
+                sending_time,
+                ..
             }) = &result
             {
                 self.replication_applied.insert(target.clone(), Some(applied.clone()));
+                self.replication_applied_sent.insert(target.clone(), *sending_time);
             }
             self.engine.replication_handler().update_progress(target, request_id, result);
         }

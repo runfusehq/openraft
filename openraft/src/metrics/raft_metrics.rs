@@ -101,6 +101,14 @@ where
     /// a target is absent until it reports.
     #[cfg_attr(feature = "serde", serde(default))]
     pub replication_applied: Option<BTreeMap<NID, Option<LogId<NID>>>>,
+
+    /// For a leader, when it sent the request whose response carried each target's
+    /// `replication_applied` report, as the duration since [`Raft::clock_base`](crate::Raft::clock_base)
+    /// (fuse fork): the report shows what the target had applied no earlier than this instant, so
+    /// a reader measures a target's lag up to it rather than up to when it reads the report.
+    /// `None` when this node is not leader. In-process only: not serialized.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub replication_applied_sent_since_clock_base: Option<BTreeMap<NID, Duration>>,
 }
 
 impl<NID, N> fmt::Display for RaftMetrics<NID, N>
@@ -173,6 +181,7 @@ where
             millis_since_quorum_ack: None,
             quorum_acked_since_clock_base: None,
             replication_applied: None,
+            replication_applied_sent_since_clock_base: None,
             membership_config: Arc::new(StoredMembership::default()),
             replication: None,
         }

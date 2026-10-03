@@ -306,6 +306,7 @@ where C: RaftTypeConfig
             clock_base,
 
             replication_applied: Default::default(),
+            replication_applied_sent: Default::default(),
 
             _p: Default::default(),
         };

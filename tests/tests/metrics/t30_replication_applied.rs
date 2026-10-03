@@ -41,8 +41,27 @@ async fn leader_reports_followers_applied_log_ids() -> Result<()> {
         )
         .await?;
 
+    // Each report carries when the leader sent the request it answered: on the leader's clock,
+    // not in the future, and moving on with every heartbeat.
+    let leader = router.get_raft_handle(&0)?;
+    let base = leader.clock_base();
+    let sent = |m: &openraft::RaftMetrics<u64, ()>| m.replication_applied_sent_since_clock_base.clone();
+    let first = sent(&leader.metrics().borrow()).expect("a leader reports when each report was sent");
+    assert_eq!(first.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
+    for (id, at) in &first {
+        assert!(base + *at <= openraft::TokioInstant::now(), "target {id}: sent in the future");
+    }
+    router
+        .wait(&0, timeout())
+        .metrics(
+            |m| m.replication_applied_sent_since_clock_base.as_ref().is_some_and(|s| s.iter().all(|(id, at)| *at > first[id])),
+            "heartbeats move each target's report send time on",
+        )
+        .await?;
+
     let follower = router.get_raft_handle(&1)?.metrics().borrow().clone();
     assert_eq!(follower.replication_applied, None, "a follower reports no followers' applied log ids");
+    assert_eq!(follower.replication_applied_sent_since_clock_base, None, "nor when they were sent");
     Ok(())
 }
 
