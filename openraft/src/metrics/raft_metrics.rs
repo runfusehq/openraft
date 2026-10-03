@@ -96,7 +96,9 @@ where
 
     /// For a leader, each target's last applied log id, as its latest successful
     /// append-entries (or heartbeat) response reported it (fuse fork): a follower's publish
-    /// watermark. `None` when this node is not leader; a target is absent until it reports.
+    /// watermark. The report is taken when the target answers, before it applies what that
+    /// append committed, so it trails by up to one round. `None` when this node is not leader;
+    /// a target is absent until it reports.
     #[cfg_attr(feature = "serde", serde(default))]
     pub replication_applied: Option<BTreeMap<NID, Option<LogId<NID>>>>,
 }

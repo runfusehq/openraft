@@ -214,6 +214,7 @@ where
 
     /// While leading: each target's last applied log id, as its latest successful
     /// append-entries response reported it (fuse fork; `RaftMetrics::replication_applied`).
+    /// Only responses of this leader's current replication session reach it.
     pub(crate) replication_applied: BTreeMap<C::NodeId, Option<LogId<C::NodeId>>>,
 
     pub(crate) _p: PhantomData<SM>,
@@ -1553,14 +1554,13 @@ where
 
         // A leader may have stepped down.
         if self.engine.leader.is_some() {
+            // The latest report stands, lower or not: a target that restarted from an
+            // older state reports less than it did.
             if let Ok(ReplicationResult {
                 applied: Some(applied), ..
             }) = &result
             {
-                let entry = self.replication_applied.entry(target.clone()).or_default();
-                if entry.as_ref() < Some(applied) {
-                    *entry = Some(applied.clone());
-                }
+                self.replication_applied.insert(target.clone(), Some(applied.clone()));
             }
             self.engine.replication_handler().update_progress(target, request_id, result);
         }
