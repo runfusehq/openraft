@@ -438,7 +438,10 @@ where C: RaftTypeConfig
         let is_ok = res.is_ok();
 
         if let Some(tx) = tx {
-            let resp: AppendEntriesResponse<C::NodeId> = res.into();
+            let mut resp: AppendEntriesResponse<C::NodeId> = res.into();
+            if let AppendEntriesResponse::Success { applied } = &mut resp {
+                *applied = self.state.io_applied().cloned();
+            }
             self.output.push_command(Command::Respond {
                 when: None,
                 resp: Respond::new(Ok(resp), tx),

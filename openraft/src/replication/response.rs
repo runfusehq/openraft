@@ -111,6 +111,10 @@ pub(crate) struct ReplicationResult<C: RaftTypeConfig> {
 
     /// Ok for matching, Err for conflict.
     pub(crate) result: Result<Option<LogIdOf<C>>, LogIdOf<C>>,
+
+    /// The last log id the target had applied when it answered, if it said (fuse fork; see
+    /// `AppendEntriesResponse::Success`).
+    pub(crate) applied: Option<LogIdOf<C>>,
 }
 
 impl<C> fmt::Display for ReplicationResult<C>
@@ -132,7 +136,17 @@ impl<C> ReplicationResult<C>
 where C: RaftTypeConfig
 {
     pub(crate) fn new(sending_time: InstantOf<C>, result: Result<Option<LogIdOf<C>>, LogIdOf<C>>) -> Self {
-        Self { sending_time, result }
+        Self {
+            sending_time,
+            result,
+            applied: None,
+        }
+    }
+
+    /// With the target's applied log id, as it reported it.
+    pub(crate) fn with_applied(mut self, applied: Option<LogIdOf<C>>) -> Self {
+        self.applied = applied;
+        self
     }
 }
 

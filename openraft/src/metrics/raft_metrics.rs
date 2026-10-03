@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration;
 use std::sync::Arc;
@@ -92,6 +93,12 @@ where
     // ---
     /// The replication states. It is Some() only when this node is leader.
     pub replication: Option<ReplicationMetrics<NID>>,
+
+    /// For a leader, each target's last applied log id, as its latest successful
+    /// append-entries (or heartbeat) response reported it (fuse fork): a follower's publish
+    /// watermark. `None` when this node is not leader; a target is absent until it reports.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub replication_applied: Option<BTreeMap<NID, Option<LogId<NID>>>>,
 }
 
 impl<NID, N> fmt::Display for RaftMetrics<NID, N>
@@ -163,6 +170,7 @@ where
             current_leader: None,
             millis_since_quorum_ack: None,
             quorum_acked_since_clock_base: None,
+            replication_applied: None,
             membership_config: Arc::new(StoredMembership::default()),
             replication: None,
         }

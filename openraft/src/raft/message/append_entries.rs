@@ -61,7 +61,15 @@ impl<C: RaftTypeConfig> MessageSummary<AppendEntriesRequest<C>> for AppendEntrie
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize), serde(bound = ""))]
 pub enum AppendEntriesResponse<NID: NodeId> {
     /// Successfully replicated all log entries to the target node.
-    Success,
+    ///
+    /// `applied` is the last log id the target had applied to its state machine when it
+    /// answered (fuse fork): a leader learns each follower's publish watermark from it, at no
+    /// extra round trip, on every append and heartbeat. A transport answering for the target
+    /// without knowing it sends `None`.
+    Success {
+        #[cfg_attr(feature = "serde", serde(default))]
+        applied: Option<LogId<NID>>,
+    },
 
     /// Successfully sent the first portion of log entries.
     ///
@@ -93,7 +101,12 @@ pub enum AppendEntriesResponse<NID: NodeId> {
 
 impl<NID: NodeId> AppendEntriesResponse<NID> {
     pub fn is_success(&self) -> bool {
-        matches!(*self, AppendEntriesResponse::Success)
+        matches!(*self, AppendEntriesResponse::Success { .. })
+    }
+
+    /// A [`Self::Success`] that does not report the target's applied log id.
+    pub fn success() -> Self {
+        AppendEntriesResponse::Success { applied: None }
     }
 
     pub fn is_conflict(&self) -> bool {
@@ -104,7 +117,7 @@ impl<NID: NodeId> AppendEntriesResponse<NID> {
 impl<NID: NodeId> fmt::Display for AppendEntriesResponse<NID> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AppendEntriesResponse::Success => write!(f, "Success"),
+            AppendEntriesResponse::Success { applied } => write!(f, "Success(applied: {})", applied.display()),
             AppendEntriesResponse::PartialSuccess(m) => {
                 write!(f, "PartialSuccess({})", m.display())
             }

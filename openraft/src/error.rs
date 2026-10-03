@@ -705,7 +705,7 @@ impl<NID: NodeId> From<RejectVoteRequest<NID>> for RejectAppendEntries<NID> {
 impl<NID: NodeId> From<Result<(), RejectAppendEntries<NID>>> for AppendEntriesResponse<NID> {
     fn from(r: Result<(), RejectAppendEntries<NID>>) -> Self {
         match r {
-            Ok(_) => AppendEntriesResponse::Success,
+            Ok(_) => AppendEntriesResponse::success(),
             Err(e) => match e {
                 RejectAppendEntries::ByVote(v) => AppendEntriesResponse::HigherVote(v),
                 RejectAppendEntries::ByConflictingLogId { expect: _, local: _ } => AppendEntriesResponse::Conflict,

@@ -477,14 +477,14 @@ where
         );
 
         match append_resp {
-            AppendEntriesResponse::Success => {
+            AppendEntriesResponse::Success { applied } => {
                 let matching = sending_range.last;
-                let next = self.finish_success_append(matching, leader_time, log_ids);
+                let next = self.finish_success_append(matching, applied, leader_time, log_ids);
                 Ok(next)
             }
             AppendEntriesResponse::PartialSuccess(matching) => {
                 Self::debug_assert_partial_success(&sending_range, &matching);
-                let next = self.finish_success_append(matching, leader_time, log_ids);
+                let next = self.finish_success_append(matching, None, leader_time, log_ids);
                 Ok(next)
             }
             AppendEntriesResponse::HigherVote(vote) => {
@@ -860,12 +860,13 @@ where
     fn finish_success_append(
         &mut self,
         matching: Option<LogId<C::NodeId>>,
+        applied: Option<LogId<C::NodeId>>,
         leader_time: InstantOf<C>,
         log_ids: DataWithId<LogIdRange<C::NodeId>>,
     ) -> Option<Data<C>> {
         self.send_progress(
             log_ids.request_id(),
-            ReplicationResult::new(leader_time, Ok(matching.clone())),
+            ReplicationResult::new(leader_time, Ok(matching.clone())).with_applied(applied),
         );
 
         if matching < log_ids.data().last {

@@ -212,6 +212,10 @@ where
     /// `Raft` handle (`Raft::clock_base`).
     pub(crate) clock_base: InstantOf<C>,
 
+    /// While leading: each target's last applied log id, as its latest successful
+    /// append-entries response reported it (fuse fork; `RaftMetrics::replication_applied`).
+    pub(crate) replication_applied: BTreeMap<C::NodeId, Option<LogId<C::NodeId>>>,
+
     pub(crate) _p: PhantomData<SM>,
 }
 
@@ -562,6 +566,18 @@ where
         let millis_since_quorum_ack = last_quorum_acked.map(|t| t.elapsed().as_millis() as u64);
         let base = self.clock_base;
         let quorum_acked_since_clock_base = last_quorum_acked.map(|t| if t > base { t - base } else { Duration::ZERO });
+        // Only a leader reports followers' applied log ids; leaving leadership forgets them, so a
+        // later term starts from what its own followers report.
+        let replication_applied = match &replication {
+            Some(targets) => {
+                self.replication_applied.retain(|id, _| targets.contains_key(id));
+                Some(self.replication_applied.clone())
+            }
+            None => {
+                self.replication_applied.clear();
+                None
+            }
+        };
 
         let st = &self.engine.state;
 
@@ -589,6 +605,7 @@ where
 
             // --- replication ---
             replication: replication.clone(),
+            replication_applied: replication_applied.clone(),
         };
 
         let data_metrics = RaftDataMetrics {
@@ -1536,6 +1553,15 @@ where
 
         // A leader may have stepped down.
         if self.engine.leader.is_some() {
+            if let Ok(ReplicationResult {
+                applied: Some(applied), ..
+            }) = &result
+            {
+                let entry = self.replication_applied.entry(target.clone()).or_default();
+                if entry.as_ref() < Some(applied) {
+                    *entry = Some(applied.clone());
+                }
+            }
             self.engine.replication_handler().update_progress(target, request_id, result);
         }
     }

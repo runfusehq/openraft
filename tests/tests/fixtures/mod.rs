@@ -1086,7 +1086,7 @@ impl RaftNetwork<MemConfig> for RaftRouterNetwork {
         // If entries are truncated by quota, return an partial success response.
         if let Some(truncated) = truncated {
             match resp {
-                AppendEntriesResponse::Success => Ok(AppendEntriesResponse::PartialSuccess(truncated)),
+                AppendEntriesResponse::Success { .. } => Ok(AppendEntriesResponse::PartialSuccess(truncated)),
                 _ => Ok(resp),
             }
         } else {
