@@ -695,6 +695,34 @@ where C: RaftTypeConfig
         Ok(rx)
     }
 
+    /// Submit several mutating client requests as one leader append, returning one response
+    /// receiver per request, in order.
+    ///
+    /// It is the same as calling [`Raft::client_write_ff`] once per request, except that the
+    /// leader appends the whole group with one `AppendInputEntries` command, so the log store
+    /// writes (and syncs) it once and replication carries it together. The entries get
+    /// consecutive log indexes in the order given. On a node that is not the leader every
+    /// receiver resolves to a `ForwardToLeader` error and nothing is appended.
+    #[tracing::instrument(level = "debug", skip(self, app_data))]
+    pub async fn client_write_many(
+        &self,
+        app_data: Vec<C::D>,
+    ) -> Result<Vec<ResponderReceiverOf<C>>, Fatal<C::NodeId>> {
+        let mut writes = Vec::with_capacity(app_data.len());
+        let mut receivers = Vec::with_capacity(app_data.len());
+        for app_data in app_data {
+            let (app_data, tx, rx) = ResponderOf::<C>::from_app_data(app_data);
+            writes.push((app_data, tx));
+            receivers.push(rx);
+        }
+
+        if !writes.is_empty() {
+            self.inner.send_msg(RaftMsg::ClientWriteRequests { writes }).await?;
+        }
+
+        Ok(receivers)
+    }
+
     /// Return `true` if this node is already initialized and can not be initialized again with
     /// [`Raft::initialize`]
     pub async fn is_initialized(&self) -> Result<bool, Fatal<C::NodeId>> {

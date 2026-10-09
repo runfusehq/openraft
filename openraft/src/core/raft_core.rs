@@ -521,6 +521,46 @@ where
         true
     }
 
+    /// Append a group of client writes as one leader append, in order, and install each
+    /// write's response channel at its log index.
+    ///
+    /// If this node is not the leader, every write is answered with `ForwardToLeader`.
+    ///
+    /// Returns whether the writes were appended.
+    #[tracing::instrument(level = "debug", skip_all, fields(id = display(&self.id), n = writes.len()))]
+    pub fn write_entries(&mut self, writes: Vec<(C::D, ResponderOf<C>)>) -> bool {
+        let mut lh = match self.engine.leader_handler() {
+            Ok(lh) => lh,
+            Err(forward_err) => {
+                for (_, tx) in writes {
+                    tx.send(Err(forward_err.clone().into()));
+                }
+                return false;
+            }
+        };
+
+        let n = writes.len() as u64;
+        if n == 0 {
+            return true;
+        }
+        let mut entries = Vec::with_capacity(writes.len());
+        let mut txs = Vec::with_capacity(writes.len());
+        for (app_data, tx) in writes {
+            entries.push(C::Entry::from_app_data(app_data));
+            txs.push(tx);
+        }
+
+        lh.leader_append_entries(entries);
+        let last = lh.state.last_log_id().unwrap().index;
+
+        // The group got the consecutive indexes ending at `last`.
+        for (i, tx) in txs.into_iter().enumerate() {
+            self.client_resp_channels.insert(last + 1 - n + i as u64, tx);
+        }
+
+        true
+    }
+
     /// Send a heartbeat message to every followers/learners.
     ///
     /// Currently heartbeat is a blank log
@@ -1212,6 +1252,9 @@ where
             }
             RaftMsg::ClientWriteRequest { app_data, tx } => {
                 self.write_entry(C::Entry::from_app_data(app_data), Some(tx));
+            }
+            RaftMsg::ClientWriteRequests { writes } => {
+                self.write_entries(writes);
             }
             RaftMsg::Initialize { members, tx } => {
                 tracing::info!(

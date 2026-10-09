@@ -74,6 +74,11 @@ where C: RaftTypeConfig
         tx: ResponderOf<C>,
     },
 
+    /// Several client writes appended by the leader as one group, in order.
+    ClientWriteRequests {
+        writes: Vec<(C::D, ResponderOf<C>)>,
+    },
+
     CheckIsLeaderRequest {
         tx: ClientReadTx<C>,
     },
@@ -118,6 +123,7 @@ where C: RaftTypeConfig
                 format!("InstallFullSnapshot: vote: {}, snapshot: {}", vote, snapshot)
             }
             RaftMsg::ClientWriteRequest { .. } => "ClientWriteRequest".to_string(),
+            RaftMsg::ClientWriteRequests { writes } => format!("ClientWriteRequests: {}", writes.len()),
             RaftMsg::CheckIsLeaderRequest { .. } => "CheckIsLeaderRequest".to_string(),
             RaftMsg::Initialize { members, .. } => {
                 format!("Initialize: {:?}", members)
