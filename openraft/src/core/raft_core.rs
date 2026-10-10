@@ -1567,14 +1567,16 @@ where
         // A leader may have stepped down.
         if self.engine.leader.is_some() {
             // The latest report stands, lower or not: a target that restarted from an
-            // older state reports less than it did.
+            // older state reports less than it did. A target that has applied nothing yet
+            // reports `None` and is recorded so, with when it was sampled, rather than left
+            // absent: absent reads as unheard.
             if let Ok(ReplicationResult {
                 applied: Some(applied),
                 sending_time,
                 ..
             }) = &result
             {
-                self.replication_applied.insert(target.clone(), Some(applied.clone()));
+                self.replication_applied.insert(target.clone(), applied.clone());
                 self.replication_applied_sent.insert(target.clone(), *sending_time);
             }
             self.engine.replication_handler().update_progress(target, request_id, result);

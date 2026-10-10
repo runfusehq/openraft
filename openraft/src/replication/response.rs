@@ -112,9 +112,10 @@ pub(crate) struct ReplicationResult<C: RaftTypeConfig> {
     /// Ok for matching, Err for conflict.
     pub(crate) result: Result<Option<LogIdOf<C>>, LogIdOf<C>>,
 
-    /// The last log id the target had applied when it answered, if it said (fuse fork; see
-    /// `AppendEntriesResponse::Success`).
-    pub(crate) applied: Option<LogIdOf<C>>,
+    /// The target's applied report, if its response carried one (fuse fork; see
+    /// `AppendEntriesResponse::Success`): `Some(None)` is a target that has applied nothing
+    /// yet, `None` a response that reports nothing (a partial success, a conflict).
+    pub(crate) applied: Option<Option<LogIdOf<C>>>,
 }
 
 impl<C> fmt::Display for ReplicationResult<C>
@@ -143,9 +144,9 @@ where C: RaftTypeConfig
         }
     }
 
-    /// With the target's applied log id, as it reported it.
+    /// With the target's applied report: its applied log id, `None` if it has applied nothing.
     pub(crate) fn with_applied(mut self, applied: Option<LogIdOf<C>>) -> Self {
-        self.applied = applied;
+        self.applied = Some(applied);
         self
     }
 }

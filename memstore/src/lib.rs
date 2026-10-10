@@ -113,6 +113,9 @@ pub enum BlockOperation {
     DelayBuildingSnapshot,
     BuildSnapshot,
     PurgeLog,
+    /// Delay applying entries to the state machine (fuse fork): a node stays at what it had
+    /// applied, while its log and the raft core move on.
+    DelayApply,
 }
 
 /// An in-memory storage system implementing the `RaftStorage` trait.
@@ -463,6 +466,11 @@ impl RaftStorage<TypeConfig> for Arc<MemStore> {
         entries: &[Entry<TypeConfig>],
     ) -> Result<Vec<ClientResponse>, StorageError<MemNodeId>> {
         let mut res = Vec::with_capacity(entries.len());
+
+        if let Some(d) = self.get_blocking(&BlockOperation::DelayApply) {
+            tracing::info!(?d, "delay apply");
+            tokio::time::sleep(d).await;
+        }
 
         let mut sm = self.sm.write().await;
 

@@ -479,7 +479,7 @@ where
         match append_resp {
             AppendEntriesResponse::Success { applied } => {
                 let matching = sending_range.last;
-                let next = self.finish_success_append(matching, applied, leader_time, log_ids);
+                let next = self.finish_success_append(matching, Some(applied), leader_time, log_ids);
                 Ok(next)
             }
             AppendEntriesResponse::PartialSuccess(matching) => {
@@ -860,14 +860,15 @@ where
     fn finish_success_append(
         &mut self,
         matching: Option<LogId<C::NodeId>>,
-        applied: Option<LogId<C::NodeId>>,
+        applied: Option<Option<LogId<C::NodeId>>>,
         leader_time: InstantOf<C>,
         log_ids: DataWithId<LogIdRange<C::NodeId>>,
     ) -> Option<Data<C>> {
-        self.send_progress(
-            log_ids.request_id(),
-            ReplicationResult::new(leader_time, Ok(matching.clone())).with_applied(applied),
-        );
+        let result = ReplicationResult::new(leader_time, Ok(matching.clone()));
+        self.send_progress(log_ids.request_id(), match applied {
+            Some(applied) => result.with_applied(applied),
+            None => result,
+        });
 
         if matching < log_ids.data().last {
             Some(Data::new_logs(
