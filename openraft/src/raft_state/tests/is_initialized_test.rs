@@ -24,10 +24,31 @@ fn test_is_initialized() {
         assert_eq!(false, rs.is_initialized());
     }
 
-    // Vote is non-default value
+    // fuse fork: a vote granted or cast, not committed, with an empty log: not initialized
     {
         let rs = RaftState::<u64, (), TokioInstant> {
             vote: UTime::new(TokioInstant::now(), Vote::new(1, 2)),
+            ..Default::default()
+        };
+
+        assert_eq!(false, rs.is_initialized());
+    }
+
+    // A committed vote (a leader was heard): initialized
+    {
+        let rs = RaftState::<u64, (), TokioInstant> {
+            vote: UTime::new(TokioInstant::now(), Vote::new_committed(1, 2)),
+            ..Default::default()
+        };
+
+        assert_eq!(true, rs.is_initialized());
+    }
+
+    // An uncommitted vote with a non-empty log: initialized
+    {
+        let rs = RaftState::<u64, (), TokioInstant> {
+            vote: UTime::new(TokioInstant::now(), Vote::new(1, 2)),
+            log_ids: LogIdList::new([log_id(0, 0, 0)]),
             ..Default::default()
         };
 

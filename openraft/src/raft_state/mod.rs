@@ -225,8 +225,15 @@ where
             return true;
         }
 
-        // If it received a request-vote from other node, it is already initialized.
-        if self.vote_ref() != &Vote::default() {
+        // fuse fork: a node whose log is empty and whose vote is not committed has only granted
+        // (or cast) a vote: it has accepted no entry and seen no leader, so nothing can have been
+        // committed through it, and it may still be initialized. initialize() writes the membership
+        // at the first log id and stands in the term after the vote's, so the vote it granted is
+        // never granted again in that term. Every member must be given the same membership: the
+        // entry is then identical on every node, and a leader's later append matches it. A node
+        // whose vote is committed has heard a leader of the formed cluster, which will replicate to
+        // it.
+        if self.vote_ref().is_committed() {
             return true;
         }
 

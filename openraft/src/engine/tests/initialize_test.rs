@@ -145,17 +145,63 @@ fn test_initialize() -> anyhow::Result<()> {
         );
     }
 
-    tracing::info!("--- not allowed because of vote");
+    tracing::info!("--- not allowed because of a committed vote");
     {
         let mut eng = eng();
-        eng.state.vote = UTime::new(TokioInstant::now(), Vote::new(0, 1));
+        eng.state.vote = UTime::new(TokioInstant::now(), Vote::new_committed(1, 2));
 
         assert_eq!(
             Err(InitializeError::NotAllowed(NotAllowed {
                 last_log_id: None,
-                vote: Vote::new(0, 1),
+                vote: Vote::new_committed(1, 2),
             })),
             eng.initialize(entry())
+        );
+    }
+
+    tracing::info!("--- not allowed because of last_log_id, with an uncommitted vote");
+    {
+        let mut eng = eng();
+        eng.state.vote = UTime::new(TokioInstant::now(), Vote::new(1, 2));
+        eng.state.log_ids = LogIdList::new(vec![log_id0]);
+
+        assert_eq!(
+            Err(InitializeError::NotAllowed(NotAllowed {
+                last_log_id: Some(log_id0),
+                vote: Vote::new(1, 2),
+            })),
+            eng.initialize(entry())
+        );
+    }
+
+    tracing::info!("--- fuse fork: ok: node 1 granted node 2's term-1 vote and holds no log");
+    tracing::info!("--- it writes the same first entry and stands in term 2, never again in term 1");
+    {
+        let mut eng = eng();
+        eng.config.id = 1;
+        eng.state.vote = UTime::new(TokioInstant::now(), Vote::new(1, 2));
+
+        eng.initialize(entry())?;
+
+        assert_eq!(Some(&log_id0), eng.state.last_log_id());
+        assert_eq!(ServerState::Candidate, eng.state.server_state);
+        assert_eq!(&m12(), eng.state.membership_state.effective().membership());
+
+        assert_eq!(
+            vec![
+                Command::AppendInputEntries {
+                    vote: Vote::new(1, 2),
+                    entries: vec![Entry::new_membership(LogId::default(), m12())],
+                },
+                Command::SaveVote { vote: Vote::new(2, 1) },
+                Command::SendVote {
+                    vote_req: VoteRequest {
+                        vote: Vote::new(2, 1),
+                        last_log_id: Some(log_id0),
+                    },
+                },
+            ],
+            eng.output.take_commands()
         );
     }
 
