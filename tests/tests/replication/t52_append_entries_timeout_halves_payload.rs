@@ -105,14 +105,12 @@ async fn append_entries_timeout_halves_payload() -> Result<()> {
 }
 
 /// (fuse fork) A heartbeat carries no entries: one that times out leaves the entries hint as it
-/// is, and the next catch-up is not held to one entry per append.
+/// is, so the next catch-up is not held to one entry per append.
 #[async_entry::test(worker_threads = 4, init = "init_default_ut_tracing()", tracing_span = "debug")]
 async fn a_timed_out_heartbeat_does_not_shrink_the_payload() -> Result<()> {
     let config = Arc::new(
         Config {
-            heartbeat_interval: 50,
-            election_timeout_min: 1000,
-            election_timeout_max: 1001,
+            enable_heartbeat: false,
             ..Default::default()
         }
         .validate()?,
@@ -121,9 +119,9 @@ async fn a_timed_out_heartbeat_does_not_shrink_the_payload() -> Result<()> {
     let mut router = RaftRouter::new(config.clone());
     let mut log_index = router.new_cluster(btreeset! {0}, btreeset! {1}).await?;
 
-    let heartbeats = Arc::new(Mutex::new(0usize));
+    let heartbeat_timed_out = Arc::new(Mutex::new(false));
     let sent: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
-    let (h, s) = (heartbeats.clone(), sent.clone());
+    let (h, s) = (heartbeat_timed_out.clone(), sent.clone());
     router.set_rpc_pre_hook(RPCTypes::AppendEntries, move |_router, req, from, target| {
         let r: AppendEntriesRequest<_> = req.try_into().unwrap();
         if target != 1 {
@@ -131,8 +129,8 @@ async fn a_timed_out_heartbeat_does_not_shrink_the_payload() -> Result<()> {
         }
         if r.entries.is_empty() {
             let mut h = h.lock().unwrap();
-            if *h < 5 {
-                *h += 1;
+            if !*h {
+                *h = true;
                 return Err(RPCError::Timeout(Timeout {
                     action: RPCTypes::AppendEntries,
                     id: from,
@@ -146,25 +144,26 @@ async fn a_timed_out_heartbeat_does_not_shrink_the_payload() -> Result<()> {
         Ok(())
     });
 
-    tracing::info!(log_index, "--- heartbeats to node-1 time out");
+    tracing::info!(log_index, "--- one heartbeat to node-1 times out");
     {
+        router.get_raft_handle(&0)?.trigger().heartbeat().await?;
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while *heartbeats.lock().unwrap() < 5 {
-            assert!(std::time::Instant::now() < deadline, "heartbeats were sent");
-            tokio::time::sleep(Duration::from_millis(20)).await;
+        while !*heartbeat_timed_out.lock().unwrap() {
+            assert!(std::time::Instant::now() < deadline, "the heartbeat was sent");
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
-    tracing::info!(log_index, "--- a catch-up after them is sent whole");
+    tracing::info!(log_index, "--- the next catch-up goes out whole");
     {
         router.set_unreachable(1, true);
         log_index += router.client_request_many(0, "0", 10).await?;
+        sent.lock().unwrap().clear();
         router.set_unreachable(1, false);
         router.wait(&1, timeout()).applied_index(Some(log_index), "10 writes").await?;
         let sent = sent.lock().unwrap();
-        // A timed-out heartbeat that set the hint would hold every append to one entry for
-        // the hint's TTL.
-        assert!(sent.iter().any(|len| *len > 1), "an append carried more than one entry: {:?}", sent);
+        // A heartbeat timeout that set the hint would hold this catch-up to one entry per append.
+        assert!(sent.first().is_some_and(|len| *len > 1), "the first catch-up append carried more than one entry: {:?}", sent);
     }
 
     Ok(())

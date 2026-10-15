@@ -761,6 +761,8 @@ where
         snapshot_req: DataWithId<Option<LogIdOf<C>>>,
     ) -> Result<Option<Data<C>>, ReplicationError<C::NodeId, C::Node>> {
         let request_id = snapshot_req.request_id();
+        // A snapshot that times out is not an append: it leaves the entries hint as it is.
+        self.last_sent_entries = 0;
 
         tracing::info!(request_id = display(request_id), "{}", func_name!());
 
