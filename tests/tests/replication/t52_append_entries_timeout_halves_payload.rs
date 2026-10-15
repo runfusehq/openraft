@@ -162,8 +162,10 @@ async fn a_timed_out_heartbeat_does_not_shrink_the_payload() -> Result<()> {
         router.set_unreachable(1, false);
         router.wait(&1, timeout()).applied_index(Some(log_index), "10 writes").await?;
         let sent = sent.lock().unwrap();
-        // A heartbeat timeout that set the hint would hold this catch-up to one entry per append.
-        assert!(sent.first().is_some_and(|len| *len > 1), "the first catch-up append carried more than one entry: {:?}", sent);
+        // A heartbeat timeout that set the hint would hold this catch-up to one entry per append
+        // for the hint's 10 uses: about ten appends. Unshrunk it takes one or two (the first may
+        // be a range computed before node-1 went unreachable).
+        assert!(sent.len() <= 3, "the catch-up went in a few appends, not one entry each: {:?}", sent);
     }
 
     Ok(())
