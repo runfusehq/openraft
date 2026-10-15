@@ -145,7 +145,16 @@ where
     /// Appropriate number of entries to send.
     /// This is only used by AppendEntries RPC.
     entries_hint: ReplicationHint,
+
+    /// The number of entries the last AppendEntries RPC carried; 0 for a heartbeat.
+    ///
+    /// (fuse fork) A non-empty append that times out is retried with half as many entries,
+    /// so a follower that cannot take the whole payload within the deadline still catches up.
+    last_sent_entries: u64,
 }
+
+/// How many RPCs an entries hint holds for.
+const DEFAULT_ENTRIES_HINT_TTL: u64 = 10;
 
 impl<C, N, LS> ReplicationCore<C, N, LS>
 where
@@ -198,6 +207,7 @@ where
             weak_tx_event: tx_event.downgrade(),
             next_action: None,
             entries_hint: Default::default(),
+            last_sent_entries: 0,
         };
 
         let join_handle = C::AsyncRuntime::spawn(this.main().instrument(span));
@@ -284,7 +294,10 @@ where
                             tracing::error!(err = display(&err), "RPCError");
 
                             let retry = match &err {
-                                RPCError::Timeout(_) => false,
+                                RPCError::Timeout(_) => {
+                                    self.shrink_hint_after_timeout();
+                                    false
+                                }
                                 RPCError::Unreachable(_unreachable) => {
                                     // If there is an [`Unreachable`] error, we will backoff for a
                                     // period of time. Backoff will be reset if there is a
@@ -333,9 +346,25 @@ where
         Ok(())
     }
 
+    /// (fuse fork) After an AppendEntries RPC that carried entries timed out, send at most half
+    /// as many for the next several RPCs.
+    ///
+    /// The deadline of every AppendEntries RPC is `heartbeat_interval`. Without this, a catch-up
+    /// payload a follower cannot take within it is sent again whole and times out again, forever:
+    /// the follower never catches up. Halving on each timeout reaches one entry in the worst case.
+    /// The hint expires after [`DEFAULT_ENTRIES_HINT_TTL`] RPCs, and the full payload resumes. A
+    /// heartbeat that times out carried nothing and leaves the hint as it is.
+    fn shrink_hint_after_timeout(&mut self) {
+        if self.last_sent_entries == 0 {
+            return;
+        }
+        let n = std::cmp::max(1, self.last_sent_entries / 2);
+        self.entries_hint = ReplicationHint::new(n, DEFAULT_ENTRIES_HINT_TTL);
+        tracing::debug!(entries_hint = debug(&self.entries_hint), "append timed out; updated entries hint");
+    }
+
     /// When a [`PayloadTooLarge`] error is received, update the hint for the next several RPC.
     fn update_hint(&mut self, too_large: &PayloadTooLarge) {
-        const DEFAULT_ENTRIES_HINT_TTL: u64 = 10;
 
         match too_large.action() {
             RPCTypes::Vote => {
@@ -435,6 +464,7 @@ where
         };
 
         let leader_time = C::now();
+        self.last_sent_entries = logs.len() as u64;
 
         // Build the heartbeat frame to be sent to the follower.
         let payload = AppendEntriesRequest {

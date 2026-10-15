@@ -11,6 +11,7 @@ mod t21_hung_replication_close;
 mod t50_append_entries_backoff;
 mod t50_append_entries_backoff_rejoin;
 mod t51_append_entries_too_large;
+mod t52_append_entries_timeout_halves_payload;
 #[cfg(feature = "loosen-follower-log-revert")]
 mod t60_feature_loosen_follower_log_revert;
 #[cfg(feature = "loosen-follower-log-revert")]
