@@ -1090,11 +1090,11 @@ where
         Ok(at_most)
     }
 
-    /// Spawn parallel vote requests to all cluster members.
+    /// Spawn parallel vote requests to all cluster members: `vote_req` goes to every other voter,
+    /// as a real vote or, with `pre_vote`, as a Pre-Vote (fuse fork). For a Pre-Vote only an `Ok`
+    /// response reaches the tally: a transport error, a timeout or `Unreachable` from a
+    /// partitioned peer is dropped, so it can never make a quorum.
     #[tracing::instrument(level = "trace", skip_all, fields(vote=vote_req.summary()))]
-    /// Send `vote_req` to every other voter, as a real vote or, with `pre_vote`, as a Pre-Vote
-    /// (fuse fork). For a Pre-Vote only an `Ok` response reaches the tally: a transport error, a
-    /// timeout or `Unreachable` from a partitioned peer is dropped, so it can never make a quorum.
     async fn spawn_parallel_vote_requests(&mut self, vote_req: &VoteRequest<C::NodeId>, pre_vote: bool) {
         let members = self.engine.state.membership_state.effective().voter_ids();
 

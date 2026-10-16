@@ -153,17 +153,58 @@ fn test_a_pre_vote_quorum_starts_the_real_election() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_a_rejected_pre_vote_changes_no_vote_and_notes_a_greater_log() -> anyhow::Result<()> {
+fn test_a_pre_vote_refused_at_the_same_vote_changes_nothing_and_notes_a_greater_log() -> anyhow::Result<()> {
+    let mut eng = follower(m123());
+    eng.pre_elect();
+    eng.output.take_commands();
+
+    eng.handle_pre_vote_resp(2, VoteResponse::new(Vote::new_committed(2, 2), Some(log_id(2, 2, 9)), false));
+
+    assert_eq!(Vote::new_committed(2, 2), *eng.state.vote_ref());
+    assert!(eng.is_there_greater_log());
+    assert!(eng.pre_candidate_ref().is_some(), "the round stays open; the core restarts it later");
+    assert_eq!(0, eng.output.take_commands().len());
+    Ok(())
+}
+
+/// Node 1 lags at term 2 with the longer log; node 3 was forced to campaign at term 3 and lost,
+/// so it sits at an uncommitted (3,3) with a shorter log. Node 3 refuses node 1's Pre-Vote at
+/// (3,1) by vote, and node 1 refuses node 3's at (4,3) by log. Unless node 1 learns term 3 from
+/// the refusal, its next round asks at (3,1) again and the two refuse each other for good.
+#[test]
+fn test_a_pre_vote_refused_by_a_greater_vote_adopts_its_uncommitted_form() -> anyhow::Result<()> {
+    let mut eng = follower(m123());
+    eng.pre_elect();
+    eng.output.take_commands();
+
+    eng.handle_pre_vote_resp(3, VoteResponse::new(Vote::new(3, 3), Some(log_id(2, 2, 4)), false));
+
+    assert_eq!(Vote::new(3, 3), *eng.state.vote_ref(), "the responder's term is learned");
+    assert!(!eng.state.vote_ref().is_committed());
+    assert!(eng.pre_candidate_ref().is_none(), "the round at (3,1) is over");
+    assert!(!eng.is_there_greater_log());
+    assert!(eng.output.take_commands().iter().any(|c| matches!(c, Command::SaveVote { vote } if *vote == Vote::new(3, 3))));
+
+    // The next round asks at term 4, which node 3 grants: node 1's log is longer.
+    eng.pre_elect();
+    assert_eq!(&Vote::new(4, 1), eng.pre_candidate_ref().unwrap().vote_ref());
+    Ok(())
+}
+
+/// A refusal carrying a committed greater vote (a leader at a later term) is adopted only in its
+/// non-committed form, as a refused real vote is: a refusal is not proof that leader holds a
+/// quorum for this node to follow.
+#[test]
+fn test_a_pre_vote_refused_by_a_committed_greater_vote_adopts_it_uncommitted() -> anyhow::Result<()> {
     let mut eng = follower(m123());
     eng.pre_elect();
     eng.output.take_commands();
 
     eng.handle_pre_vote_resp(2, VoteResponse::new(Vote::new_committed(4, 2), Some(log_id(4, 2, 9)), false));
 
-    assert_eq!(Vote::new_committed(2, 2), *eng.state.vote_ref(), "a Pre-Vote response never updates the vote");
+    assert_eq!(Vote::new(4, 2), *eng.state.vote_ref());
     assert!(eng.is_there_greater_log());
-    assert!(eng.pre_candidate_ref().is_some(), "the round stays open; the core restarts it later");
-    assert_eq!(0, eng.output.take_commands().len());
+    assert!(eng.pre_candidate_ref().is_none());
     Ok(())
 }
 

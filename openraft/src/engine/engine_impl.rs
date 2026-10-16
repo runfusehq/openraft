@@ -466,7 +466,8 @@ where C: RaftTypeConfig
     }
 
     /// Tally a Pre-Vote response (fuse fork). When a quorum would grant, start the real
-    /// [`elect`](Self::elect). A Pre-Vote response never changes the local vote.
+    /// [`elect`](Self::elect). A grant never changes the local vote; a refusal carrying a greater
+    /// vote moves this node to that vote's non-committed form, as a refused real vote does.
     #[tracing::instrument(level = "debug", skip(self, resp))]
     pub(crate) fn handle_pre_vote_resp(&mut self, target: C::NodeId, resp: VoteResponse<C::NodeId>) {
         tracing::info!(
@@ -498,6 +499,15 @@ where C: RaftTypeConfig
             );
             self.set_greater_log();
         }
+
+        // A responder at a greater vote: adopt its non-committed form, as a rejected real vote
+        // does in `handle_vote_resp`. Without this a node whose term lags would keep asking at
+        // its own term + 1, which the responder refuses by vote while this node refuses the
+        // responder by log, and no leader is ever elected. A greater vote only moves this node
+        // forward, and it ends the round (`update_vote` drops it).
+        let mut vote = resp.vote.clone();
+        vote.committed = false;
+        let _ = self.vote_handler().update_vote(&vote);
     }
 
     #[tracing::instrument(level = "debug", skip(self, resp))]
