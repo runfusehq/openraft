@@ -1186,9 +1186,11 @@ where
         }
     }
 
-    /// How a peer answered this node's Pre-Vote `sent` (fuse fork). A refusal's cause is read off
-    /// the reply in the order the peer could have refused for it: a vote `sent` does not reach,
-    /// then a longer log; with neither, the peer still had a live leader.
+    /// How a peer answered this node's Pre-Vote `sent` (fuse fork). The reply carries the peer's
+    /// vote and log, not its grounds, so a refusal is put down to a cause the reply proves: a vote
+    /// `sent` does not reach, else a longer log; with neither, only a live leader (its lease, or
+    /// it leads) explains it. A peer refusing on its lease whose log is also longer counts as
+    /// `RefusedByLog`; its own `served_*` counters hold the exact grounds.
     fn classify_pre_vote_reply(&self, sent: &Vote<C::NodeId>, resp: &VoteResponse<C::NodeId>) -> PreVoteReply {
         if resp.vote_granted {
             PreVoteReply::Granted
@@ -1366,9 +1368,12 @@ where
                 let current = self.engine.pre_candidate_ref().map(|x| x.vote_ref().clone());
                 if current.as_ref() == Some(&sender_vote) {
                     self.pre_vote_stats.reply(self.classify_pre_vote_reply(&sender_vote, &resp));
-                    let electing = self.engine.candidate_ref().is_some();
+                    // A candidate left from an earlier, failed election may still be set: a new
+                    // election is a new candidate vote, not a candidate appearing.
+                    let before = self.engine.candidate_ref().map(|c| c.vote_ref().clone());
                     self.engine.handle_pre_vote_resp(target, resp);
-                    if !electing && self.engine.candidate_ref().is_some() {
+                    let after = self.engine.candidate_ref().map(|c| c.vote_ref().clone());
+                    if after.is_some() && after != before {
                         self.pre_vote_stats.election_started();
                     }
                 } else {

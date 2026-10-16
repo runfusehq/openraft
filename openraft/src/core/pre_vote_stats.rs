@@ -146,9 +146,10 @@ pub struct PreVoteRound {
 
 /// Pre-Vote counters since the raft started (fuse fork).
 ///
-/// `replies_*`: the answers to the Pre-Votes this node sent. A refusal's cause is read off the
-/// reply (its vote, then its log), so it is inferred; `served_*` are the exact grounds on which
-/// this node answered others.
+/// `replies_*`: the answers to the Pre-Votes this node sent. A reply carries no grounds, so a
+/// refusal is put down to a cause the reply proves (its vote, then its log), else a live leader;
+/// a peer refusing on its lease whose log is also longer counts as `refused_by_log`. `served_*`
+/// are the exact grounds on which this node answered others.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PreVoteStatsSnapshot {
     pub rounds_started: u64,
