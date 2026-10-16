@@ -54,6 +54,10 @@ where C: RaftTypeConfig
     pub(in crate::raft) rx_data_metrics: WatchReceiverOf<C, RaftDataMetrics<C>>,
     pub(in crate::raft) rx_server_metrics: WatchReceiverOf<C, RaftServerMetrics<C>>,
     pub(in crate::raft) progress_watcher: IoProgressWatcher<C>,
+    /// See [`Raft::pre_vote_stats`](crate::Raft::pre_vote_stats) (fuse fork).
+    pub(in crate::raft) pre_vote_stats: Arc<crate::core::pre_vote_stats::PreVoteStats>,
+    /// The instant the counters' millisecond times count from (fuse fork).
+    pub(in crate::raft) pre_vote_base: crate::type_config::alias::InstantOf<C>,
 
     pub(in crate::raft) tx_shutdown: Mutex<Option<OneshotSenderOf<C, ()>>>,
     pub(in crate::raft) core_state: Mutex<CoreState<C>>,

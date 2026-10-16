@@ -43,6 +43,7 @@ use crate::core::heartbeat::event::HeartbeatEvent;
 use crate::core::heartbeat::handle::HeartbeatWorkersHandle;
 use crate::core::merged_raft_msg_receiver::BatchRaftMsgReceiver;
 use crate::core::notification::Notification;
+use crate::core::pre_vote_stats::PreVoteReply;
 use crate::core::raft_msg::AppendEntriesTx;
 use crate::core::raft_msg::ClientReadTx;
 use crate::core::raft_msg::RaftMsg;
@@ -142,6 +143,7 @@ use crate::type_config::alias::WatchReceiverOf;
 use crate::type_config::alias::WatchSenderOf;
 use crate::type_config::async_runtime::mpsc::MpscSender;
 use crate::vote::RaftLeaderId;
+use crate::vote::RaftTerm;
 use crate::vote::RaftVote;
 use crate::vote::raft_vote::RaftVoteExt;
 use crate::vote::vote_status::VoteStatus;
@@ -203,6 +205,10 @@ where
     pub(crate) config: Arc<Config>,
 
     pub(crate) runtime_config: Arc<RuntimeConfig<C>>,
+    /// Pre-Vote counters, shared with the [`Raft`](crate::Raft) handle (fuse fork).
+    pub(crate) pre_vote_stats: Arc<crate::core::pre_vote_stats::PreVoteStats>,
+    /// The instant the counters' millisecond times count from (fuse fork).
+    pub(crate) pre_vote_base: InstantOf<C>,
 
     /// Additional state that does not directly affect the consensus.
     pub(crate) core_state: CoreState<C>,
@@ -1527,12 +1533,14 @@ where
         let id = self.id.clone();
         let tx = self.tx_notification.clone();
         let ttl = Duration::from_millis(self.config.election_timeout_min);
+        let pre_vote_stats = self.pre_vote_stats.clone();
 
         self.broadcast_to_voters(ttl, |target, mut client, option| {
             let req = vote_req.clone();
             let vote = vote.clone();
             let id = id.clone();
             let tx = tx.clone();
+            let pre_vote_stats = pre_vote_stats.clone();
 
             let span = match kind {
                 VoteRequestKind::Vote => {
@@ -1559,6 +1567,9 @@ where
                             timeout: ttl,
                         };
                         tracing::warn!("timeout while requesting {}: {}", kind.as_str(), timeout_err);
+                        if let VoteRequestKind::PreVote = kind {
+                            pre_vote_stats.reply(PreVoteReply::Timeout);
+                        }
                         return;
                     }
                 };
@@ -1585,7 +1596,10 @@ where
                     // `pre_vote` returns `Ok(granted)` from the default impl, so Pre-Vote
                     // degrades to a no-op rather than relying on this.
                     Err(err) => {
-                        tracing::warn!("while requesting {}, error: {}, target: {}", kind.as_str(), err, target)
+                        tracing::warn!("while requesting {}, error: {}, target: {}", kind.as_str(), err, target);
+                        if let VoteRequestKind::PreVote = kind {
+                            pre_vote_stats.reply(PreVoteReply::NetworkError);
+                        }
                     }
                 }
             }
@@ -1684,11 +1698,29 @@ where
         });
     }
 
+    /// How a peer answered this node's Pre-Vote `sent` (fuse fork). The reply carries the peer's
+    /// vote and log, not its grounds, so a refusal is put down to a cause the reply proves: a vote
+    /// `sent` does not reach, else a longer log; with neither, only a live leader (its lease, or
+    /// it leads) explains it. A peer refusing on its lease whose log is also longer counts as
+    /// `RefusedByLog`; its own `served_*` counters hold the exact grounds.
+    fn classify_pre_vote_reply(&self, sent: &VoteOf<C>, resp: &VoteResponse<C>) -> PreVoteReply {
+        if resp.vote_granted {
+            PreVoteReply::Granted
+        } else if !(sent.as_ref_vote() >= resp.vote.as_ref_vote()) {
+            PreVoteReply::RefusedByVote
+        } else if resp.last_log_id.as_ref() > self.engine.state.last_log_id() {
+            PreVoteReply::RefusedByLog
+        } else {
+            PreVoteReply::RefusedLiveLeader
+        }
+    }
+
     #[tracing::instrument(level = "debug", skip_all)]
     pub(super) fn handle_pre_vote_request(&mut self, req: VoteRequest<C>, tx: VoteTx<C>) {
         tracing::info!("{}: req: {}", func_name!(), req);
 
-        let resp = self.engine.handle_pre_vote_req(req);
+        let (resp, verdict) = self.engine.pre_vote_verdict(req);
+        self.pre_vote_stats.served(verdict);
 
         // A Pre-Vote persists nothing, so there is no vote IO to wait for: respond at once.
         self.engine.output.push_command(Command::Respond {
@@ -1997,12 +2029,25 @@ where
                     resp
                 );
 
-                #[allow(clippy::collapsible_if)]
-                if self.engine.pre_candidate.is_some() {
-                    let my_vote = self.engine.pre_candidate_ref().map(|x| x.vote_ref());
-                    if Self::does_vote_match("Pre-Candidate", &candidate_vote, my_vote, "PreVoteResponse") {
-                        self.engine.handle_pre_vote_resp(target, resp);
+                let my_vote = self.engine.pre_candidate_ref().map(|x| x.vote_ref().clone());
+                if my_vote.is_some()
+                    && Self::does_vote_match("Pre-Candidate", &candidate_vote, my_vote.as_ref(), "PreVoteResponse")
+                {
+                    // fuse fork: count how the peer answered, and whether the round started an
+                    // election. A candidate left from an earlier, failed election may still be
+                    // set: a new election is a new candidate vote, not a candidate appearing.
+                    if let Some(sent) = &my_vote {
+                        self.pre_vote_stats.reply(self.classify_pre_vote_reply(sent, &resp));
                     }
+                    let before = self.engine.candidate_ref().map(|c| c.vote_ref().clone());
+                    self.engine.handle_pre_vote_resp(target, resp);
+                    let after = self.engine.candidate_ref().map(|c| c.vote_ref().clone());
+                    if after.is_some() && after != before {
+                        self.pre_vote_stats.election_started();
+                    }
+                } else {
+                    // A response to an earlier round, or after the round ended (fuse fork).
+                    self.pre_vote_stats.reply(PreVoteReply::Stale);
                 }
             }
 
@@ -2690,6 +2735,8 @@ where
                 self.spawn_parallel_vote_requests(&vote_req, VoteRequestKind::Vote).await;
             }
             Command::SendPreVote { vote_req } => {
+                let started_ms = (C::now() - self.pre_vote_base).as_millis() as u64;
+                self.pre_vote_stats.round_started(vote_req.vote.term().as_u64().unwrap_or(0), started_ms);
                 self.spawn_parallel_vote_requests(&vote_req, VoteRequestKind::PreVote).await;
             }
             Command::ReplicateCommitted { committed } => {

@@ -8,6 +8,7 @@ use crate::LogIdOptionExt;
 use crate::Membership;
 use crate::RaftTypeConfig;
 use crate::core::ServerState;
+use crate::core::pre_vote_stats::PreVoteVerdict;
 use crate::core::raft_msg::AppendEntriesTx;
 use crate::engine::Command;
 use crate::engine::Condition;
@@ -459,8 +460,18 @@ where
     /// state is left untouched and no command is emitted. Unlike
     /// [`handle_vote_req`](Self::handle_vote_req), a Pre-Vote is never a leadership transfer, so
     /// the leader lease is always honored.
-    #[tracing::instrument(level = "debug", skip_all)]
+    ///
+    /// fuse fork: RaftCore answers through [`pre_vote_verdict`](Self::pre_vote_verdict), which also
+    /// gives the grounds; this wrapper is what the engine tests call.
+    #[cfg(test)]
     pub(crate) fn handle_pre_vote_req(&mut self, req: VoteRequest<C>) -> VoteResponse<C> {
+        self.pre_vote_verdict(req).0
+    }
+
+    /// [`handle_pre_vote_req`](Self::handle_pre_vote_req), with the grounds of the answer (fuse
+    /// fork: counted by [`PreVoteStats`](crate::core::pre_vote_stats::PreVoteStats)).
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub(crate) fn pre_vote_verdict(&mut self, req: VoteRequest<C>) -> (VoteResponse<C>, PreVoteVerdict) {
         let now = C::now();
         let local_leased_vote = &self.state.vote;
 
@@ -476,7 +487,7 @@ where
         // would not grant a vote, so it would not grant a Pre-Vote either.
         if local_leased_vote.is_committed() && !local_leased_vote.is_expired(now, Duration::from_millis(0)) {
             tracing::info!("reject pre-vote-request: leader lease has not yet expired");
-            return VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false);
+            return (self.refuse_pre_vote(), PreVoteVerdict::LeaderLease);
         }
 
         // A Leader never renews the lease on its own `state.vote`; its live lease is the
@@ -485,7 +496,7 @@ where
             && leader.is_lease_valid(self.config.timer_config.leader_lease)
         {
             tracing::info!("reject pre-vote-request: quorum-ack lease has not yet expired");
-            return VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false);
+            return (self.refuse_pre_vote(), PreVoteVerdict::LeaderQuorumAcked);
         }
 
         // Reject if the candidate's log is behind.
@@ -495,13 +506,18 @@ where
                 req.last_log_id.display(),
                 self.state.last_log_id().display(),
             );
-            return VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false);
+            return (self.refuse_pre_vote(), PreVoteVerdict::ShorterLog);
         }
 
         // Whether this node *would* grant the vote, compared the same way as a real vote — but
         // without persisting anything. The local vote and term are left untouched.
         let granted = req.vote.as_ref_vote() >= self.state.vote_ref().as_ref_vote();
-        VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), granted)
+        let verdict = if granted { PreVoteVerdict::Granted } else { PreVoteVerdict::LowerVote };
+        (VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), granted), verdict)
+    }
+
+    fn refuse_pre_vote(&self) -> VoteResponse<C> {
+        VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false)
     }
 
     #[tracing::instrument(level = "debug", skip(self, resp))]

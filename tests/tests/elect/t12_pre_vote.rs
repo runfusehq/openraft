@@ -58,6 +58,13 @@ async fn pre_vote_prevents_term_inflation() -> Result<()> {
         follower_term_before, follower_term_after
     );
 
+    tracing::info!("--- fuse fork: the rounds that kept it from raising the term show on its Pre-Vote counters");
+    let stats = n1.pre_vote_stats();
+    assert!(stats.rounds_started >= 2, "node 1 pre-voted at its election timeouts: {stats:?}");
+    assert!(stats.replies_network_error > 0, "every peer was unreachable: {stats:?}");
+    assert_eq!((0, 0), (stats.replies_granted, stats.elections_started), "{stats:?}");
+    assert_eq!(Some(follower_term_before + 1), stats.last_round.map(|r| r.term), "a round asks for the next term");
+
     tracing::info!("--- the leader kept leadership at the same term");
     n0.wait(timeout()).state(ServerState::Leader, "node 0 still leader").await?;
     assert_eq!(leader_term_before, n0.metrics().borrow_watched().current_term);
@@ -225,6 +232,11 @@ async fn pre_vote_elects_new_leader_after_leader_isolated() -> Result<()> {
             )
             .await?;
     }
+
+    tracing::info!("--- fuse fork: a granted round started the election, and one of 1, 2 granted it");
+    let (s1, s2) = (router.get_raft_handle(&1)?.pre_vote_stats(), router.get_raft_handle(&2)?.pre_vote_stats());
+    assert!(s1.elections_started + s2.elections_started >= 1, "a granted round started the election: {s1:?} {s2:?}");
+    assert!(s1.served_granted + s2.served_granted >= 1, "and one of them granted it: {s1:?} {s2:?}");
 
     Ok(())
 }

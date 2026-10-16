@@ -553,6 +553,8 @@ where
         let (tx_shutdown, rx_shutdown) = C::oneshot();
 
         let runtime_config = Arc::new(RuntimeConfig::new(&config));
+        let pre_vote_stats = Arc::new(crate::core::pre_vote_stats::PreVoteStats::default());
+        let pre_vote_base = C::now();
 
         let core_span = tracing::span!(
             parent: tracing::Span::current(),
@@ -588,6 +590,7 @@ where
             let id = id.clone();
             let config = config.clone();
             let runtime_config = runtime_config.clone();
+            let pre_vote_stats = pre_vote_stats.clone();
             let tx_api = tx_api.clone();
             let tx_install_snapshot = tx_install_snapshot.clone();
             let rx_metrics = rx_metrics.clone();
@@ -608,6 +611,8 @@ where
                     id: id.clone(),
                     config: config.clone(),
                     runtime_config: runtime_config.clone(),
+                    pre_vote_stats: pre_vote_stats.clone(),
+                    pre_vote_base,
                     core_state: Default::default(),
                     network_factory: Arc::new(C::mutex(network)),
                     log_store,
@@ -686,6 +691,8 @@ where
             id,
             config,
             runtime_config,
+            pre_vote_stats,
+            pre_vote_base,
             tick_handle: Mutex::new(None),
             tx_api,
             rx_metrics,
@@ -725,6 +732,15 @@ where
     C: RaftTypeConfig,
     SM: RaftStateMachine<C>,
 {
+    /// Pre-Vote counters since this raft started (fuse fork): the rounds it started and how its
+    /// peers answered, and the Pre-Votes it answered and why. See [`PreVoteStatsSnapshot`].
+    ///
+    /// [`PreVoteStatsSnapshot`]: crate::PreVoteStatsSnapshot
+    pub fn pre_vote_stats(&self) -> crate::PreVoteStatsSnapshot {
+        let now_ms = (C::now() - self.inner.pre_vote_base).as_millis() as u64;
+        self.inner.pre_vote_stats.snapshot(now_ms)
+    }
+
     /// Return a handle to update runtime config.
     ///
     /// Such enabling/disabling heartbeat, election, etc.
