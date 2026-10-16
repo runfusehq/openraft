@@ -13,6 +13,7 @@ use crate::engine::testing::UTConfig;
 use crate::engine::Command;
 use crate::engine::Engine;
 use crate::engine::LogIdList;
+use crate::progress::Progress;
 use crate::raft::VoteRequest;
 use crate::raft::VoteResponse;
 use crate::testing::log_id;
@@ -197,5 +198,36 @@ fn test_a_round_in_flight_survives_the_per_tick_following_refresh() -> anyhow::R
     assert_eq!(&Vote::new(3, 1), eng.pre_candidate_ref().unwrap().vote_ref());
     eng.handle_pre_vote_resp(2, VoteResponse::new(Vote::new_committed(2, 2), Some(log_id(2, 2, 5)), true));
     assert_eq!(Vote::new(3, 1), *eng.state.vote_ref(), "the round's quorum still elects");
+    Ok(())
+}
+
+/// A leader that a quorum acked within the lease refuses a Pre-Vote: its own vote time is not
+/// renewed by its followers' acks, so the vote-lease rule alone would let it grant, and a member
+/// that rejoins after a partition could unseat it.
+#[test]
+fn test_a_leader_with_recent_quorum_acks_refuses_a_pre_vote() -> anyhow::Result<()> {
+    let mut eng = follower(m123());
+    eng.state.vote = UTime::new(TokioInstant::now() - Duration::from_millis(300), Vote::new_committed(3, 1));
+    eng.testing_new_leader().clock_progress.increase_to(&2, Some(TokioInstant::now())).ok();
+
+    let resp = eng.handle_pre_vote_req(VoteRequest::new(Vote::new(4, 3), Some(log_id(2, 2, 5))));
+
+    assert!(!resp.vote_granted, "a leader a quorum keeps acking does not grant");
+    assert_eq!(Vote::new_committed(3, 1), *eng.state.vote_ref());
+    assert_eq!(0, eng.output.take_commands().len());
+    Ok(())
+}
+
+/// The contrast: a leader no quorum has acked within the lease grants like any node, so a cluster
+/// whose leader lost its quorum still elects.
+#[test]
+fn test_a_leader_without_recent_quorum_acks_grants_a_pre_vote() -> anyhow::Result<()> {
+    let mut eng = follower(m123());
+    eng.state.vote = UTime::new(TokioInstant::now() - Duration::from_millis(300), Vote::new_committed(3, 1));
+    eng.testing_new_leader();
+
+    let resp = eng.handle_pre_vote_req(VoteRequest::new(Vote::new(4, 3), Some(log_id(2, 2, 5))));
+
+    assert!(resp.vote_granted);
     Ok(())
 }

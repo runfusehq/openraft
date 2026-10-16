@@ -438,6 +438,18 @@ where C: RaftTypeConfig
             return VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false);
         }
 
+        // This node leads and a quorum acked it within the lease: the cluster has a live leader,
+        // so a candidate needs no election. A leader's own vote time is not renewed by its
+        // followers' acks, so the check above alone would let a leader grant here; its quorum-ack
+        // clock is what tells it is still leading. (Reading it records the leader's own local
+        // time in its volatile clock progress, as RaftCore does whenever it reads it.)
+        if let Some(leader) = self.leader.as_mut() {
+            if leader.last_quorum_acked_time().is_some_and(|acked| now <= acked + lease) {
+                tracing::info!("reject pre-vote-request: this node leads and a quorum acked it within the lease");
+                return VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false);
+            }
+        }
+
         // The candidate's log is behind this node's: it could not win.
         if req.last_log_id.as_ref() < self.state.last_log_id() {
             tracing::info!(
