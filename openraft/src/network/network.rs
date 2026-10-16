@@ -79,6 +79,24 @@ where C: RaftTypeConfig
         option: RPCOption,
     ) -> Result<VoteResponse<C::NodeId>, RPCError<C::NodeId, C::Node, RaftError<C::NodeId>>>;
 
+    /// Send a Pre-Vote RPC to the target (fuse fork; backport of upstream openraft `0f6bb9a3`):
+    /// ask whether it *would* grant `rpc.vote`, without it changing any state. The receiver
+    /// answers with [`Raft::pre_vote`](crate::Raft::pre_vote).
+    ///
+    /// Only an `Ok` response with `vote_granted` counts toward a Pre-Vote quorum: a transport
+    /// error, a timeout or `Unreachable` from a partitioned peer never does, so a node cut off from
+    /// a quorum never campaigns. The default answers "granted" without asking, which keeps a
+    /// network that has not implemented this working with
+    /// [`Config::enable_pre_vote`](crate::Config::enable_pre_vote) on, but **gives no protection**:
+    /// implement it to get Pre-Vote's guarantee.
+    async fn pre_vote(
+        &mut self,
+        rpc: VoteRequest<C::NodeId>,
+        _option: RPCOption,
+    ) -> Result<VoteResponse<C::NodeId>, RPCError<C::NodeId, C::Node, RaftError<C::NodeId>>> {
+        Ok(VoteResponse::new(rpc.vote, None, true))
+    }
+
     /// Send a complete Snapshot to the target.
     ///
     /// This method is responsible to fragment the snapshot and send it to the target node.

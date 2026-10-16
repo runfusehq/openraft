@@ -228,12 +228,32 @@ pub struct Config {
            default_missing_value = "true"
     )]
     pub enable_elect: bool,
+
+    /// Whether a follower runs a Pre-Vote round before a real election (fuse fork; backport of
+    /// upstream openraft `0f6bb9a3`). With it, a node whose election timer fires first asks the
+    /// other voters whether they *would* grant it a vote at `term + 1`, changing no state; only if
+    /// a quorum would does it bump its term and campaign. A node cut off from the quorum therefore
+    /// never inflates its term, and cannot depose a healthy leader when it rejoins.
+    ///
+    /// The network must implement [`RaftNetwork::pre_vote`](crate::network::RaftNetwork::pre_vote):
+    /// its default answers "granted", which keeps a cluster that has not implemented it working,
+    /// but gives no protection.
+    // clap 4 requires `num_args = 0..=1`, or it complains about missing arg error
+    // https://github.com/clap-rs/clap/discussions/4374
+    #[clap(long,
+           default_value_t = false,
+           action = clap::ArgAction::Set,
+           num_args = 0..=1,
+           default_missing_value = "true"
+    )]
+    pub enable_pre_vote: bool,
 }
 
 /// Updatable config for a raft runtime.
 pub(crate) struct RuntimeConfig {
     pub(crate) enable_heartbeat: AtomicBool,
     pub(crate) enable_elect: AtomicBool,
+    pub(crate) enable_pre_vote: AtomicBool,
 }
 
 impl RuntimeConfig {
@@ -241,6 +261,7 @@ impl RuntimeConfig {
         Self {
             enable_heartbeat: AtomicBool::from(config.enable_heartbeat),
             enable_elect: AtomicBool::from(config.enable_elect),
+            enable_pre_vote: AtomicBool::from(config.enable_pre_vote),
         }
     }
 }

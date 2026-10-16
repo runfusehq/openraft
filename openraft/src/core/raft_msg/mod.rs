@@ -53,6 +53,12 @@ where C: RaftTypeConfig
         tx: VoteTx<C>,
     },
 
+    /// A Pre-Vote request (fuse fork): answered without changing any state.
+    RequestPreVote {
+        rpc: VoteRequest<C::NodeId>,
+        tx: VoteTx<C>,
+    },
+
     InstallFullSnapshot {
         vote: Vote<C::NodeId>,
         snapshot: Snapshot<C>,
@@ -112,6 +118,9 @@ where C: RaftTypeConfig
             }
             RaftMsg::RequestVote { rpc, .. } => {
                 format!("RequestVote: {}", rpc.summary())
+            }
+            RaftMsg::RequestPreVote { rpc, .. } => {
+                format!("RequestPreVote: {}", rpc.summary())
             }
             RaftMsg::BeginReceivingSnapshot { .. } => "BeginReceivingSnapshot".to_string(),
             RaftMsg::InstallFullSnapshot { vote, snapshot, .. } => {

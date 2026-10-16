@@ -57,6 +57,12 @@ where
     C: RaftTypeConfig,
     QS: QuorumSet<C::NodeId> + fmt::Debug + Clone + 'static,
 {
+    /// When this voting round started: a Pre-Vote round in flight is not restarted before an
+    /// election timeout has passed since (fuse fork).
+    pub(crate) fn starting_time(&self) -> &InstantOf<C> {
+        &self.starting_time
+    }
+
     pub(crate) fn new(
         starting_time: InstantOf<C>,
         vote: Vote<C::NodeId>,
