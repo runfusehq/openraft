@@ -109,6 +109,10 @@ where C: RaftTypeConfig
         if vote > self.state.vote_ref() {
             tracing::info!("vote is changing from {} to {}", self.state.vote_ref(), vote);
 
+            // A Pre-Vote round asked about the next term of the vote this node held: once the
+            // node adopts another vote (a leader's or a candidate's), the round is moot.
+            *self.pre_candidate = None;
+
             self.state.vote.update(C::now(), vote.clone());
             self.output.push_command(Command::SaveVote { vote: vote.clone() });
         } else {
@@ -203,8 +207,9 @@ where C: RaftTypeConfig
 
         *self.leader = None;
         *self.candidate = None;
-        // A node that follows a leader drops any Pre-Vote round in flight.
-        *self.pre_candidate = None;
+        // A Pre-Vote round is NOT dropped here: this fork re-derives the following state on every
+        // tick (Engine::leader_step_down), which would cancel each round before its replies
+        // arrive. update_vote drops it when the vote actually changes.
 
         self.server_state_handler().update_server_state_if_changed();
     }

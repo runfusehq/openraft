@@ -50,6 +50,42 @@ async fn pre_vote_keeps_an_isolated_follower_from_inflating_its_term() -> Result
     Ok(())
 }
 
+/// With Pre-Vote enabled, losing the leader still elects a new one: the two followers grant each
+/// other's Pre-Vote once the old leader's lease has expired.
+#[async_entry::test(worker_threads = 8, init = "init_default_ut_tracing()", tracing_span = "debug")]
+async fn pre_vote_elects_a_new_leader_when_the_leader_is_lost() -> Result<()> {
+    let config = Arc::new(
+        Config {
+            enable_pre_vote: true,
+            ..Default::default()
+        }
+        .validate()?,
+    );
+    let mut router = RaftRouter::new(config.clone());
+
+    router.new_cluster(btreeset! {0,1,2}, btreeset! {}).await?;
+    let n0 = router.get_raft_handle(&0)?;
+    n0.wait(timeout()).state(ServerState::Leader, "node 0 is leader").await?;
+    let term = n0.metrics().borrow().current_term;
+
+    tracing::info!("--- isolate the leader, node 0");
+    router.set_network_error(0, true);
+
+    let n1 = router.get_raft_handle(&1)?;
+    let n2 = router.get_raft_handle(&2)?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let (m1, m2) = (n1.metrics().borrow().clone(), n2.metrics().borrow().clone());
+        if m1.state == ServerState::Leader || m2.state == ServerState::Leader {
+            assert!(m1.current_term > term || m2.current_term > term);
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no new leader among 1 and 2: n1 {:?} term {}, n2 {:?} term {}", m1.state, m1.current_term, m2.state, m2.current_term);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Ok(())
+}
+
 /// The contrast: with Pre-Vote off (the default) the same isolated follower raises its term, so
 /// the test above exercises Pre-Vote and not some other quiescence.
 #[async_entry::test(worker_threads = 8, init = "init_default_ut_tracing()", tracing_span = "debug")]

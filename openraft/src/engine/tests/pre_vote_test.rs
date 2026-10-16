@@ -181,3 +181,21 @@ fn test_a_round_in_flight_is_dropped_by_following_a_leader() -> anyhow::Result<(
     assert!(eng.candidate_ref().is_none());
     Ok(())
 }
+
+/// The fork re-derives a follower's state on every tick (`Engine::leader_step_down` ->
+/// `update_internal_server_state` -> `become_following`). That must not cancel a Pre-Vote round
+/// in flight, or its replies arrive stale every time and no follower is ever elected.
+#[test]
+fn test_a_round_in_flight_survives_the_per_tick_following_refresh() -> anyhow::Result<()> {
+    let mut eng = follower(m123());
+    eng.pre_elect();
+    eng.output.take_commands();
+
+    eng.vote_handler().update_internal_server_state();
+    eng.leader_step_down();
+
+    assert_eq!(&Vote::new(3, 1), eng.pre_candidate_ref().unwrap().vote_ref());
+    eng.handle_pre_vote_resp(2, VoteResponse::new(Vote::new_committed(2, 2), Some(log_id(2, 2, 5)), true));
+    assert_eq!(Vote::new(3, 1), *eng.state.vote_ref(), "the round's quorum still elects");
+    Ok(())
+}
