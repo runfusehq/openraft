@@ -6,6 +6,7 @@ use crate::core::raft_msg::AppendEntriesTx;
 use crate::core::raft_msg::ResultSender;
 use crate::core::sm;
 use crate::core::ServerState;
+use crate::core::pre_vote_stats::PreVoteVerdict;
 use crate::display_ext::DisplayInstantExt;
 use crate::display_ext::DisplayOptionExt;
 use crate::display_ext::DisplaySlice;
@@ -420,6 +421,11 @@ where C: RaftTypeConfig
     /// no term changes, no lease is touched and no command is emitted.
     #[tracing::instrument(level = "debug", skip_all)]
     pub(crate) fn handle_pre_vote_req(&mut self, req: VoteRequest<C::NodeId>) -> VoteResponse<C::NodeId> {
+        self.pre_vote_verdict(req).0
+    }
+
+    /// [`handle_pre_vote_req`](Self::handle_pre_vote_req), with the grounds of the answer.
+    pub(crate) fn pre_vote_verdict(&mut self, req: VoteRequest<C::NodeId>) -> (VoteResponse<C::NodeId>, PreVoteVerdict) {
         let now = C::now();
         let lease = self.config.timer_config.leader_lease;
         let vote = self.state.vote_ref();
@@ -435,7 +441,7 @@ where C: RaftTypeConfig
         // A live leader's lease holds: this node would refuse the vote, so it refuses the Pre-Vote.
         if vote.is_committed() && now <= vote_utime + lease {
             tracing::info!("reject pre-vote-request: leader lease has not yet expired");
-            return VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false);
+            return (self.refuse_pre_vote(), PreVoteVerdict::LeaderLease);
         }
 
         // This node leads and a quorum acked it within the lease: the cluster has a live leader,
@@ -446,7 +452,7 @@ where C: RaftTypeConfig
         if let Some(leader) = self.leader.as_mut() {
             if leader.last_quorum_acked_time().is_some_and(|acked| now <= acked + lease) {
                 tracing::info!("reject pre-vote-request: this node leads and a quorum acked it within the lease");
-                return VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false);
+                return (self.refuse_pre_vote(), PreVoteVerdict::LeaderQuorumAcked);
             }
         }
 
@@ -457,12 +463,17 @@ where C: RaftTypeConfig
                 req.last_log_id.summary(),
                 self.state.last_log_id().summary(),
             );
-            return VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false);
+            return (self.refuse_pre_vote(), PreVoteVerdict::ShorterLog);
         }
 
         // Would the real vote be accepted? The same comparison `update_vote` makes, read-only.
         let granted = &req.vote >= self.state.vote_ref();
-        VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), granted)
+        let verdict = if granted { PreVoteVerdict::Granted } else { PreVoteVerdict::LowerVote };
+        (VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), granted), verdict)
+    }
+
+    fn refuse_pre_vote(&self) -> VoteResponse<C::NodeId> {
+        VoteResponse::new(self.state.vote_ref(), self.state.last_log_id().cloned(), false)
     }
 
     /// Tally a Pre-Vote response (fuse fork). When a quorum would grant, start the real

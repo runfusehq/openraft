@@ -45,6 +45,8 @@ where C: RaftTypeConfig
     /// See [`Raft::clock_base`](crate::Raft::clock_base).
     pub(in crate::raft) clock_base: crate::type_config::alias::InstantOf<C>,
     pub(in crate::raft) runtime_config: Arc<RuntimeConfig>,
+    /// See [`Raft::pre_vote_stats`](crate::Raft::pre_vote_stats) (fuse fork).
+    pub(in crate::raft) pre_vote_stats: Arc<crate::core::pre_vote_stats::PreVoteStats>,
     pub(in crate::raft) tick_handle: TickHandle<C>,
     pub(in crate::raft) tx_api: mpsc::UnboundedSender<RaftMsg<C>>,
     /// Cloned from the `Notify` sender given to the internal `Tick` and to `RaftCore`.

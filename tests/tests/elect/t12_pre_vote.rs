@@ -38,6 +38,12 @@ async fn pre_vote_keeps_an_isolated_follower_from_inflating_its_term() -> Result
     router.set_network_error(1, true);
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(term, n1.metrics().borrow().current_term, "node 1 did not raise its term while isolated");
+    // The rounds that kept it from raising the term show on its Pre-Vote counters.
+    let stats = n1.pre_vote_stats();
+    assert!(stats.rounds_started >= 2, "node 1 pre-voted at its election timeouts: {stats:?}");
+    assert!(stats.replies_network_error > 0, "every peer was unreachable: {stats:?}");
+    assert_eq!((0, 0), (stats.replies_granted, stats.elections_started), "{stats:?}");
+    assert_eq!(Some(term + 1), stats.last_round.map(|r| r.term), "a round asks for the next term");
 
     tracing::info!("--- reconnect node 1: the leader keeps leading in its term");
     router.set_network_error(1, false);
@@ -78,6 +84,9 @@ async fn pre_vote_elects_a_new_leader_when_the_leader_is_lost() -> Result<()> {
         let (m1, m2) = (n1.metrics().borrow().clone(), n2.metrics().borrow().clone());
         if m1.state == ServerState::Leader || m2.state == ServerState::Leader {
             assert!(m1.current_term > term || m2.current_term > term);
+            let (s1, s2) = (n1.pre_vote_stats(), n2.pre_vote_stats());
+            assert!(s1.elections_started + s2.elections_started >= 1, "a granted round started the election: {s1:?} {s2:?}");
+            assert!(s1.served_granted + s2.served_granted >= 1, "and one of them granted it: {s1:?} {s2:?}");
             break;
         }
         assert!(std::time::Instant::now() < deadline, "no new leader among 1 and 2: n1 {:?} term {}, n2 {:?} term {}", m1.state, m1.current_term, m2.state, m2.current_term);

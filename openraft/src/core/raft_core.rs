@@ -26,6 +26,7 @@ use crate::config::RuntimeConfig;
 use crate::core::balancer::Balancer;
 use crate::core::command_state::CommandState;
 use crate::core::notify::Notify;
+use crate::core::pre_vote_stats::PreVoteReply;
 use crate::core::raft_msg::external_command::ExternalCommand;
 use crate::core::raft_msg::AppendEntriesTx;
 use crate::core::raft_msg::ClientReadTx;
@@ -169,6 +170,8 @@ where
     pub(crate) config: Arc<Config>,
 
     pub(crate) runtime_config: Arc<RuntimeConfig>,
+    /// Pre-Vote counters, shared with the [`Raft`](crate::Raft) handle (fuse fork).
+    pub(crate) pre_vote_stats: Arc<crate::core::pre_vote_stats::PreVoteStats>,
 
     /// The `RaftNetworkFactory` implementation.
     pub(crate) network: N,
@@ -1112,6 +1115,7 @@ where
             let mut client = self.network.new_client(target.clone(), &target_node).await;
 
             let tx = self.tx_notify.clone();
+            let pre_vote_stats = self.pre_vote_stats.clone();
 
             let ttl = Duration::from_millis(self.config.election_timeout_min);
             let id = self.id.clone();
@@ -1141,6 +1145,9 @@ where
                                     timeout: ttl,
                                 };
                                 tracing::error!({error = %timeout_err, target = display(&target)}, "timeout");
+                                if pre_vote {
+                                    pre_vote_stats.reply(PreVoteReply::Timeout);
+                                }
                                 return;
                             }
                         };
@@ -1160,7 +1167,12 @@ where
                                     sender_vote: vote,
                                 });
                             }
-                            Err(err) => tracing::error!({error=%err, target=display(&target), pre_vote}, "while requesting vote"),
+                            Err(err) => {
+                                tracing::error!({error=%err, target=display(&target), pre_vote}, "while requesting vote");
+                                if pre_vote {
+                                    pre_vote_stats.reply(PreVoteReply::NetworkError);
+                                }
+                            }
                         }
                     }
                 }
@@ -1174,12 +1186,28 @@ where
         }
     }
 
+    /// How a peer answered this node's Pre-Vote `sent` (fuse fork). A refusal's cause is read off
+    /// the reply in the order the peer could have refused for it: a vote `sent` does not reach,
+    /// then a longer log; with neither, the peer still had a live leader.
+    fn classify_pre_vote_reply(&self, sent: &Vote<C::NodeId>, resp: &VoteResponse<C::NodeId>) -> PreVoteReply {
+        if resp.vote_granted {
+            PreVoteReply::Granted
+        } else if !(sent >= &resp.vote) {
+            PreVoteReply::RefusedByVote
+        } else if resp.last_log_id.as_ref() > self.engine.state.last_log_id() {
+            PreVoteReply::RefusedByLog
+        } else {
+            PreVoteReply::RefusedLiveLeader
+        }
+    }
+
     /// Answer a Pre-Vote request (fuse fork): nothing is persisted, so there is no IO to wait for.
     #[tracing::instrument(level = "debug", skip_all)]
     pub(super) fn handle_pre_vote_request(&mut self, req: VoteRequest<C::NodeId>, tx: VoteTx<C>) {
         tracing::info!(req = display(req.summary()), func = func_name!());
 
-        let resp = self.engine.handle_pre_vote_req(req);
+        let (resp, verdict) = self.engine.pre_vote_verdict(req);
+        self.pre_vote_stats.served(verdict);
         self.engine.output.push_command(Command::Respond {
             when: None,
             resp: Respond::new(Ok(resp), tx),
@@ -1337,8 +1365,14 @@ where
                 // A response to an earlier round, or after the round ended, is stale.
                 let current = self.engine.pre_candidate_ref().map(|x| x.vote_ref().clone());
                 if current.as_ref() == Some(&sender_vote) {
+                    self.pre_vote_stats.reply(self.classify_pre_vote_reply(&sender_vote, &resp));
+                    let electing = self.engine.candidate_ref().is_some();
                     self.engine.handle_pre_vote_resp(target, resp);
+                    if !electing && self.engine.candidate_ref().is_some() {
+                        self.pre_vote_stats.election_started();
+                    }
                 } else {
+                    self.pre_vote_stats.reply(PreVoteReply::Stale);
                     tracing::warn!(
                         "pre-vote response ignored: sent by pre-vote {}; current pre-vote: {}",
                         sender_vote,
@@ -1811,6 +1845,8 @@ where
                 self.spawn_parallel_vote_requests(&vote_req, false).await;
             }
             Command::SendPreVote { vote_req } => {
+                let started_ms = (C::now() - self.clock_base).as_millis() as u64;
+                self.pre_vote_stats.round_started(vote_req.vote.leader_id().get_term(), started_ms);
                 self.spawn_parallel_vote_requests(&vote_req, true).await;
             }
             Command::ReplicateCommitted { committed } => {

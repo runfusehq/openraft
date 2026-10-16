@@ -254,6 +254,7 @@ where C: RaftTypeConfig
         );
 
         let runtime_config = Arc::new(RuntimeConfig::new(&config));
+        let pre_vote_stats = Arc::new(crate::core::pre_vote_stats::PreVoteStats::default());
 
         let core_span = tracing::span!(
             parent: tracing::Span::current(),
@@ -279,6 +280,7 @@ where C: RaftTypeConfig
             id: id.clone(),
             config: config.clone(),
             runtime_config: runtime_config.clone(),
+            pre_vote_stats: pre_vote_stats.clone(),
             network,
             log_store,
             sm_handle,
@@ -318,6 +320,7 @@ where C: RaftTypeConfig
             config,
             clock_base,
             runtime_config,
+            pre_vote_stats,
             tick_handle,
             tx_api,
             tx_notify,
@@ -338,6 +341,13 @@ where C: RaftTypeConfig
     /// quorum_acked_since_clock_base`, exact however late the metrics are read.
     pub fn clock_base(&self) -> InstantOf<C> {
         self.inner.clock_base
+    }
+
+    /// Pre-Vote counters since this raft started (fuse fork): the rounds it started and how its
+    /// peers answered, and the Pre-Votes it answered and why. See [`PreVoteStatsSnapshot`].
+    pub fn pre_vote_stats(&self) -> crate::PreVoteStatsSnapshot {
+        let now_ms = (C::now() - self.inner.clock_base).as_millis() as u64;
+        self.inner.pre_vote_stats.snapshot(now_ms)
     }
 
     /// Return a handle to update runtime config.
