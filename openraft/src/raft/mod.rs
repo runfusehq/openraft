@@ -436,6 +436,18 @@ where C: RaftTypeConfig
         self.inner.call_core(RaftMsg::RequestVote { rpc, tx }, rx).await
     }
 
+    /// Answer a Pre-Vote request from a peer (fuse fork; backport of upstream openraft
+    /// `0f6bb9a3`): whether this node *would* grant `rpc.vote`. Nothing is persisted and no
+    /// state changes. A network's [`RaftNetwork::pre_vote`](crate::network::RaftNetwork::pre_vote)
+    /// delivers the request here on the target.
+    #[tracing::instrument(level = "debug", skip(self, rpc))]
+    pub async fn pre_vote(&self, rpc: VoteRequest<C::NodeId>) -> Result<VoteResponse<C::NodeId>, RaftError<C::NodeId>> {
+        tracing::info!(rpc = display(rpc.summary()), "Raft::pre_vote()");
+
+        let (tx, rx) = C::AsyncRuntime::oneshot();
+        self.inner.call_core(RaftMsg::RequestPreVote { rpc, tx }, rx).await
+    }
+
     /// Get the latest snapshot from the state machine.
     ///
     /// It returns error only when `RaftCore` fails to serve the request, e.g., Encountering a

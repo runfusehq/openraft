@@ -40,6 +40,7 @@ where C: RaftTypeConfig
     pub(crate) output: &'st mut EngineOutput<C>,
     pub(crate) leader: &'st mut LeaderState<C>,
     pub(crate) candidate: &'st mut CandidateState<C>,
+    pub(crate) pre_candidate: &'st mut CandidateState<C>,
 }
 
 impl<C> VoteHandler<'_, C>
@@ -202,6 +203,8 @@ where C: RaftTypeConfig
 
         *self.leader = None;
         *self.candidate = None;
+        // A node that follows a leader drops any Pre-Vote round in flight.
+        *self.pre_candidate = None;
 
         self.server_state_handler().update_server_state_if_changed();
     }

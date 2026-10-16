@@ -42,4 +42,10 @@ where C: RaftTypeConfig
     pub fn elect(&self, enabled: bool) {
         self.raft_inner.runtime_config.enable_elect.store(enabled, Ordering::Relaxed);
     }
+
+    /// Enable or disable the Pre-Vote round before an election
+    /// ([`Config::enable_pre_vote`](crate::Config::enable_pre_vote)).
+    pub fn pre_vote(&self, enabled: bool) {
+        self.raft_inner.runtime_config.enable_pre_vote.store(enabled, Ordering::Relaxed);
+    }
 }
