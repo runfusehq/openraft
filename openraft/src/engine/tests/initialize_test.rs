@@ -206,8 +206,16 @@ fn test_initialize_writes_the_canonical_first_log_id_on_every_member() -> anyhow
 fn test_initialize_keeps_a_granted_vote_and_campaigns_above_it() -> anyhow::Result<()> {
     let m123 = || Membership::<u64, ()>::new_with_defaults(vec![btreeset! {1,2,3}], []);
 
-    // (granted vote, initializing node): the candidate below and above the node.
-    for (granted, id) in [(Vote::new(1, 1), 2), (Vote::new(1, 3), 2), (Vote::new(5, 3), 1)] {
+    // (granted vote, initializing node): the candidate below and above the node, the node
+    // itself (it crashed after saving its own campaign's vote, before its index-0 entry was
+    // flushed), and an uncommitted term-0 vote above `(0, self)`.
+    for (granted, id) in [
+        (Vote::new(1, 1), 2),
+        (Vote::new(1, 3), 2),
+        (Vote::new(5, 3), 1),
+        (Vote::new(2, 2), 2),
+        (Vote::new(0, 3), 1),
+    ] {
         let mut eng = Engine::<UTConfig>::testing_default(id);
         eng.state.enable_validation(false); // Disable validation for incomplete state
         eng.state.vote = Leased::new(UTConfig::<()>::now(), Duration::from_millis(500), granted);

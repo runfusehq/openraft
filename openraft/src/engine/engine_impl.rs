@@ -233,11 +233,14 @@ where
     /// differently.
     ///
     /// Fuse fork: every member writes the same first log id, `((0, lowest voter), 0)`. Under
-    /// advanced leader ids upstream writes `((0, self), 0)`, which differs on every member.
+    /// advanced leader ids upstream writes `((0, self), 0)`, which differs on every member. Every
+    /// member that initializes must pass the identical membership, node map included: two
+    /// different index-0 entries under one log id would never conflict, so neither would be
+    /// replaced.
     ///
     /// Fuse fork: a node whose log is empty may initialize while it holds a granted, uncommitted
-    /// vote `(T, c)` with `T > 0`. It keeps that vote rather than writing `(0, self)`, which would
-    /// regress it, and the election that follows initialize campaigns at `(T+1, self)`. The
+    /// vote `(T, c)` above `(0, self)`. It keeps that vote rather than writing `(0, self)`, which
+    /// would regress it, and the election that follows initialize campaigns at `(T+1, self)`. The
     /// node's vote therefore never decreases. Its only entry below the vote is index 0, whose
     /// payload and log id are identical on every member. Before this, such a member refused to
     /// initialize, so a group whose lowest member was lost after the others granted its vote
@@ -257,17 +260,20 @@ where
         let payload = C::Payload::membership(membership);
         let entry = C::Entry::new(log_id, payload);
 
-        if self.state.vote_ref().term() == TermOf::<C>::default() {
-            // FollowingHandler requires vote to be committed.
-            let leader_id = LeaderIdOf::<C>::new(TermOf::<C>::default(), self.config.id.clone());
-            let vote = <VoteOf<C> as RaftVote>::from_leader_id(leader_id, true);
+        // FollowingHandler requires vote to be committed.
+        let leader_id = LeaderIdOf::<C>::new(TermOf::<C>::default(), self.config.id.clone());
+        let vote = <VoteOf<C> as RaftVote>::from_leader_id(leader_id, true);
+
+        if RaftVote::partial_cmp(&vote, self.state.vote_ref()).is_some_and(|o| o.is_ge()) {
+            // A pristine vote: `(0, self)` committed only raises it.
             self.state.vote.update(C::now(), Duration::default(), vote);
 
             self.following_handler().do_append_entries(vec![entry]);
         } else {
-            // A granted vote `(T, c)`: keep it. The append's I/O is labeled with that vote, the
-            // greatest the I/O progress has accepted, so the progress stays monotonic; the
-            // `SaveVote` of the `(T+1, self)` campaign that follows orders after it.
+            // A granted vote `(T, c)` above `(0, self)`: keep it. The append's I/O is labeled
+            // with that vote, the greatest the I/O progress has accepted, so the progress stays
+            // monotonic; the `SaveVote` of the `(T+1, self)` campaign that follows orders after
+            // it.
             debug_assert!(!self.state.vote_ref().is_committed());
 
             FollowingHandler {

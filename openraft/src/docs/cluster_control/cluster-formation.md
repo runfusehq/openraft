@@ -67,7 +67,9 @@ The fork changes two things.
 advanced leader ids there is no `LeaderId::default()` for an arbitrary node id type, and
 upstream writes `((0, self), 0)`, which differs on every member. Every member initialized with
 the same membership writes an identical index-0 entry, and that id is below every log id of
-term 1 or later, so rule 1 holds.
+term 1 or later, so rule 1 holds. Every member that initializes must therefore pass the
+identical membership, node map included: two different index-0 entries under one log id never
+conflict, so neither would ever be replaced.
 
 **A node with an empty log may initialize while it holds a granted, uncommitted vote
 `(T, c)`.** Without this, a group whose members granted a candidate's vote can never form once
@@ -81,10 +83,11 @@ Why it is safe:
 - **The vote never decreases.** It goes from the granted `(T, c)` straight to `(T+1, self)`.
   Writing `(0, self)`, or even `(T, self)` when `self < c`, would regress it.
 - **No committed entry is contradicted.** The log was empty, so nothing is overwritten, and the
-  only entry appended is index 0, identical on every member. In a group of 3 voters, two members
-  with empty logs also prove nothing past index 0 was ever committed.
+  only entry appended is index 0, identical on every member.
 - **Up-to-date checks are unchanged.** A log holding only the index-0 entry is the smallest
-  non-empty log, so a member holding any entry of term 1 or later never grants it a vote.
+  non-empty log, so a member holding any entry of term 1 or later never grants it a vote. An
+  entry committed past index 0 is on a quorum, and every quorum the campaign needs includes one
+  of those members, so a node that initialized this way cannot be elected over it.
 - **The departure from rule 2 is narrow.** The one entry appended below the vote is index 0,
   with an identical payload and log id on every member.
 
