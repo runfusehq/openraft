@@ -13,6 +13,7 @@ use crate::proposer::SendStamp;
 use crate::raft_state::IOId;
 use crate::replication::response::Progress;
 use crate::replication::response::ReplicationResult;
+use crate::type_config::alias::LogIdOf;
 use crate::type_config::alias::CommittedVoteOf;
 use crate::type_config::alias::InstantOf;
 use crate::type_config::alias::MpscSenderOf;
@@ -100,6 +101,20 @@ where C: RaftTypeConfig
                 stream_id: self.stream_id,
                 target: self.target.clone(),
                 sending_time: SendStamp::new(sending_time, 0),
+            })
+            .await
+            .ok();
+    }
+
+    /// Report that the target, answering a request sent at `sending_time`, had applied through
+    /// `applied` (fuse fork).
+    pub(crate) async fn notify_applied(&self, sending_time: InstantOf<C>, applied: Option<LogIdOf<C>>) {
+        self.tx_notify
+            .send(Notification::AppliedReport {
+                stream_id: self.stream_id,
+                target: self.target.clone(),
+                applied,
+                sending_time,
             })
             .await
             .ok();

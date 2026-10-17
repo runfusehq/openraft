@@ -5,6 +5,7 @@ use display_more::DisplayOptionExt;
 use crate::RaftTypeConfig;
 use crate::raft::StreamAppendError;
 use crate::raft::stream_append::StreamAppendResult;
+use crate::raft::stream_append::StreamAppendSuccess;
 use crate::type_config::alias::LogIdOf;
 use crate::type_config::alias::VoteOf;
 
@@ -20,7 +21,14 @@ use crate::type_config::alias::VoteOf;
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize), serde(bound = ""))]
 pub enum AppendEntriesResponse<C: RaftTypeConfig> {
     /// Successfully replicated all log entries to the target node.
-    Success,
+    ///
+    /// `applied` is the target's report of the last log id it had applied when it answered (fuse
+    /// fork; see [`StreamAppendSuccess::applied`]): `Some(None)` when it has applied nothing yet,
+    /// `None` when the answer carries no report. Use [`Self::success`] for a success without one.
+    Success {
+        #[cfg_attr(feature = "serde", serde(default))]
+        applied: Option<Option<LogIdOf<C>>>,
+    },
 
     /// Successfully sent the first portion of log entries.
     ///
@@ -58,7 +66,12 @@ where C: RaftTypeConfig
 {
     /// Returns true if the response indicates a successful replication.
     pub fn is_success(&self) -> bool {
-        matches!(*self, AppendEntriesResponse::Success)
+        matches!(*self, AppendEntriesResponse::Success { .. })
+    }
+
+    /// A [`Self::Success`] that carries no report of what the target applied (fuse fork).
+    pub fn success() -> Self {
+        AppendEntriesResponse::Success { applied: None }
     }
 
     /// Returns the partial success log id if this is a `PartialSuccess` response.
@@ -87,8 +100,11 @@ where C: RaftTypeConfig
         last_log_id: Option<LogIdOf<C>>,
     ) -> StreamAppendResult<C> {
         match self {
-            AppendEntriesResponse::Success => Ok(last_log_id),
-            AppendEntriesResponse::PartialSuccess(log_id) => Ok(log_id),
+            AppendEntriesResponse::Success { applied } => Ok(StreamAppendSuccess {
+                matching: last_log_id,
+                applied,
+            }),
+            AppendEntriesResponse::PartialSuccess(log_id) => Ok(StreamAppendSuccess::matching(log_id)),
             AppendEntriesResponse::Conflict => Err(StreamAppendError::Conflict(prev_log_id.unwrap())),
             AppendEntriesResponse::HigherVote(vote) => Err(StreamAppendError::HigherVote(vote)),
         }
@@ -98,7 +114,9 @@ where C: RaftTypeConfig
 impl<C: RaftTypeConfig> From<StreamAppendResult<C>> for AppendEntriesResponse<C> {
     fn from(r: StreamAppendResult<C>) -> Self {
         match r {
-            Ok(_) => AppendEntriesResponse::Success,
+            Ok(success) => AppendEntriesResponse::Success {
+                applied: success.applied,
+            },
             Err(StreamAppendError::Conflict(_)) => AppendEntriesResponse::Conflict,
             Err(StreamAppendError::HigherVote(v)) => AppendEntriesResponse::HigherVote(v),
         }
@@ -110,7 +128,10 @@ where C: RaftTypeConfig
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AppendEntriesResponse::Success => write!(f, "Success"),
+            AppendEntriesResponse::Success { applied: None } => write!(f, "Success"),
+            AppendEntriesResponse::Success { applied: Some(applied) } => {
+                write!(f, "Success(applied: {})", applied.display())
+            }
             AppendEntriesResponse::PartialSuccess(m) => {
                 write!(f, "PartialSuccess({})", m.display())
             }

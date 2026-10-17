@@ -210,6 +210,15 @@ where
     /// The instant the counters' millisecond times count from (fuse fork).
     pub(crate) pre_vote_base: InstantOf<C>,
 
+    /// While leading: each target's last applied log id, as its latest answer that reported one
+    /// said (fuse fork; [`RaftMetrics::replication_applied`]). Only answers on this leader's
+    /// current replication streams reach it.
+    pub(crate) replication_applied: BTreeMap<C::NodeId, Option<LogIdOf<C>>>,
+
+    /// While leading: when this leader sent the request whose answer carried each target's
+    /// `replication_applied` report (fuse fork; [`RaftMetrics::replication_applied_sent`]).
+    pub(crate) replication_applied_sent: BTreeMap<C::NodeId, InstantOf<C>>,
+
     /// Additional state that does not directly affect the consensus.
     pub(crate) core_state: CoreState<C>,
 
@@ -774,6 +783,22 @@ where
             last_quorum_acked.map(|t| t.elapsed().as_millis() as u64)
         };
 
+        // fuse fork: only a leader reports its targets' applied log ids; leaving leadership forgets
+        // them, so a later term starts from what its own targets report.
+        let (replication_applied, replication_applied_sent) = match &replication {
+            Some(targets) => {
+                self.replication_applied.retain(|id, _| targets.contains_key(id));
+                self.replication_applied_sent.retain(|id, _| targets.contains_key(id));
+                let sent = self.replication_applied_sent.iter().map(|(id, t)| (id.clone(), SerdeInstant::new(*t))).collect();
+                (Some(self.replication_applied.clone()), Some(sent))
+            }
+            None => {
+                self.replication_applied.clear();
+                self.replication_applied_sent.clear();
+                (None, None)
+            }
+        };
+
         let st = &self.engine.state;
 
         // Get the last flushed vote, or use initial vote (term=0, node_id=self.id)
@@ -845,6 +870,8 @@ where
 
             // --- replication ---
             replication: data_metrics.replication.clone(),
+            replication_applied,
+            replication_applied_sent,
         };
 
         // Record to external metrics recorder
@@ -2097,6 +2124,22 @@ where
             } => {
                 if let Some(mut rh) = self.engine.try_replication_handler() {
                     rh.try_update_leader_clock(stream_id, target, sending_time);
+                }
+            }
+
+            Notification::AppliedReport {
+                stream_id,
+                target,
+                applied,
+                sending_time,
+            } => {
+                // fuse fork: the latest report stands, lower or not (a target that restarted from
+                // an older state reports less than it did). A target that has applied nothing
+                // reports `None` and is recorded so, with when it was sampled: absent reads as
+                // unheard. Only this leader's current streams count.
+                if self.engine.leader.as_ref().is_some_and(|l| l.is_replication_stream_valid(&target, stream_id)) {
+                    self.replication_applied.insert(target.clone(), applied);
+                    self.replication_applied_sent.insert(target, sending_time);
                 }
             }
 

@@ -17,7 +17,8 @@ impl From<pb::AppendEntriesResponse> for AppendEntriesResponse {
         if let Some(log_id) = r.last_log_id {
             AppendEntriesResponse::PartialSuccess(Some(log_id.into()))
         } else {
-            AppendEntriesResponse::Success
+            // This example's protobuf carries no applied report (fuse fork).
+            AppendEntriesResponse::success()
         }
     }
 }
@@ -25,7 +26,7 @@ impl From<pb::AppendEntriesResponse> for AppendEntriesResponse {
 impl From<AppendEntriesResponse> for pb::AppendEntriesResponse {
     fn from(r: AppendEntriesResponse) -> Self {
         match r {
-            AppendEntriesResponse::Success => pb::AppendEntriesResponse {
+            AppendEntriesResponse::Success { .. } => pb::AppendEntriesResponse {
                 rejected_by: None,
                 conflict: false,
                 last_log_id: None,
@@ -52,15 +53,10 @@ impl From<AppendEntriesResponse> for pb::AppendEntriesResponse {
 impl From<StreamAppendResult> for pb::AppendEntriesResponse {
     fn from(result: StreamAppendResult) -> Self {
         match result {
-            Ok(Some(log_id)) => pb::AppendEntriesResponse {
+            Ok(success) => pb::AppendEntriesResponse {
                 rejected_by: None,
                 conflict: false,
-                last_log_id: Some(log_id.into()),
-            },
-            Ok(None) => pb::AppendEntriesResponse {
-                rejected_by: None,
-                conflict: false,
-                last_log_id: None,
+                last_log_id: success.matching.map(|log_id| log_id.into()),
             },
             Err(StreamAppendError::Conflict(log_id)) => pb::AppendEntriesResponse {
                 rejected_by: None,

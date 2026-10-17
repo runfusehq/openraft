@@ -19,7 +19,40 @@ use crate::type_config::async_runtime::MpscSender;
 use crate::type_config::util::TypeConfigExt;
 
 /// Result type for stream append operations.
-pub type StreamAppendResult<C> = Result<Option<LogIdOf<C>>, StreamAppendError<C>>;
+pub type StreamAppendResult<C> = Result<StreamAppendSuccess<C>, StreamAppendError<C>>;
+
+/// What a target answers to entries it accepted (fuse fork: with what it had applied).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize), serde(bound = ""))]
+pub struct StreamAppendSuccess<C: RaftTypeConfig> {
+    /// The last log id the target holds that matches the leader's.
+    pub matching: Option<LogIdOf<C>>,
+
+    /// The target's report of the last log id it had applied to its state machine when it
+    /// answered: `Some(None)` when it has applied nothing yet, `None` when the answer carries no
+    /// report (a partial success, or a transport answering for the target). A leader learns each
+    /// follower's publish watermark from it at no extra round trip, on every append and
+    /// heartbeat ([`RaftMetrics::replication_applied`](crate::RaftMetrics::replication_applied)).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub applied: Option<Option<LogIdOf<C>>>,
+}
+
+impl<C: RaftTypeConfig> std::fmt::Display for StreamAppendSuccess<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use display_more::DisplayOptionExt;
+        match &self.applied {
+            None => write!(f, "{}", self.matching.display()),
+            Some(applied) => write!(f, "{}, applied: {}", self.matching.display(), applied.display()),
+        }
+    }
+}
+
+impl<C: RaftTypeConfig> StreamAppendSuccess<C> {
+    /// A success matching up to `matching` that reports nothing about what the target applied.
+    pub fn matching(matching: Option<LogIdOf<C>>) -> Self {
+        Self { matching, applied: None }
+    }
+}
 
 const PIPELINE_BUFFER_SIZE: usize = 64;
 

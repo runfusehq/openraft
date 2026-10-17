@@ -391,6 +391,8 @@ where C: RaftTypeConfig<NodeId = u64> {
 
         snapshot: None,
         replication: None,
+        replication_applied: None,
+        replication_applied_sent: None,
     };
     let (tx, rx) = C::watch_channel(init.clone());
     let w = Wait {

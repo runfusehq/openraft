@@ -40,6 +40,7 @@ use crate::raft::SnapshotResponse;
 use crate::raft::VoteRequest;
 use crate::raft::VoteResponse;
 use crate::raft::stream_append::StreamAppendResult;
+use crate::raft::stream_append::StreamAppendSuccess;
 use crate::raft_state::IOId;
 use crate::raft_state::LogStateReader;
 use crate::raft_state::RaftState;
@@ -656,7 +657,15 @@ where
             self.state.last_log_id().display()
         );
 
-        let stream_result: StreamAppendResult<C> = self.append_entries(vote, segment).map_err(Into::into);
+        // fuse fork: the answer reports what this node had applied when it accepted the entries.
+        let applied = self.state.io_applied().cloned();
+        let stream_result: StreamAppendResult<C> = self
+            .append_entries(vote, segment)
+            .map(|matching| StreamAppendSuccess {
+                matching,
+                applied: Some(applied),
+            })
+            .map_err(Into::into);
 
         let condition = if stream_result.is_ok() {
             Some(Condition::IOFlushed {

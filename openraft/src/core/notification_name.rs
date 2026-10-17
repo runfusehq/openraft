@@ -23,6 +23,8 @@ pub enum NotificationName {
     StateMachine,
     Tick,
     PendingReadDeadlineReached,
+    /// A target's report of what it had applied (fuse fork).
+    AppliedReport,
 }
 
 #[cfg(test)]

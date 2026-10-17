@@ -155,8 +155,18 @@ where
         heartbeat: &HeartbeatEvent<C>,
     ) -> Result<(), RaftCoreClosed> {
         match result {
-            Ok(_) => {
+            Ok(success) => {
                 self.send_heartbeat_progress(heartbeat).await?;
+                // fuse fork: the answer to this heartbeat reports what the target had applied.
+                if let Some(applied) = success.applied {
+                    let noti = Notification::AppliedReport {
+                        stream_id: self.stream_id,
+                        target: self.target.clone(),
+                        applied,
+                        sending_time: heartbeat.time.time,
+                    };
+                    self.send_notification(noti, "send AppliedReport").await?;
+                }
             }
             Err(StreamAppendError::HigherVote(vote)) => {
                 tracing::debug!(
@@ -275,7 +285,7 @@ mod tests {
             let drained = self.drained.clone();
             let output = futures_util::stream::poll_fn(move |cx| match input.poll_next_unpin(cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(Some(_request)) => Poll::Ready(Some(Ok(Ok(None)))),
+                Poll::Ready(Some(_request)) => Poll::Ready(Some(Ok(Ok(crate::raft::StreamAppendSuccess::matching(None))))),
                 Poll::Ready(None) => {
                     drained.store(true, Ordering::Relaxed);
                     Poll::Ready(None)

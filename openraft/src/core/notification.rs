@@ -2,6 +2,7 @@ use std::fmt;
 
 use display_more::DisplayOptionExt;
 
+use crate::display_ext::DisplayInstantExt;
 use crate::RaftTypeConfig;
 use crate::StorageError;
 use crate::core::NotificationName;
@@ -12,6 +13,7 @@ use crate::proposer::SendStamp;
 use crate::raft::VoteResponse;
 use crate::raft_state::IOId;
 use crate::replication;
+use crate::type_config::alias::LogIdOf;
 use crate::type_config::alias::CommittedVoteOf;
 use crate::type_config::alias::InstantOf;
 use crate::type_config::alias::UncommittedVoteOf;
@@ -87,6 +89,17 @@ where C: RaftTypeConfig
         target: C::NodeId,
     },
 
+    /// A target reported what it had applied, in its answer to a request this leader sent at
+    /// `sending_time` on replication stream `stream_id` (fuse fork; see
+    /// [`StreamAppendSuccess::applied`](crate::raft::StreamAppendSuccess::applied)). `applied` is
+    /// `None` when it has applied nothing yet.
+    AppliedReport {
+        stream_id: StreamId,
+        target: C::NodeId,
+        applied: Option<LogIdOf<C>>,
+        sending_time: InstantOf<C>,
+    },
+
     /// Result of executing a command sent from a state machine worker.
     StateMachine { command_result: sm::CommandResult<C> },
 
@@ -117,6 +130,7 @@ where C: RaftTypeConfig
             Self::LocalIO { .. } => NotificationName::LocalIO,
             Self::ReplicationProgress { .. } => NotificationName::ReplicationProgress,
             Self::HeartbeatProgress { .. } => NotificationName::HeartbeatProgress,
+            Self::AppliedReport { .. } => NotificationName::AppliedReport,
             Self::StateMachine { .. } => NotificationName::StateMachine,
             Self::Tick { .. } => NotificationName::Tick,
             Self::PendingReadDeadlineReached => NotificationName::PendingReadDeadlineReached,
@@ -186,6 +200,21 @@ where C: RaftTypeConfig
                     f,
                     "HeartbeatProgress: target={}, leader_vote: {}, sending_time: {}",
                     target, leader_vote, sending_time,
+                )
+            }
+            Self::AppliedReport {
+                stream_id,
+                target,
+                applied,
+                sending_time,
+            } => {
+                write!(
+                    f,
+                    "AppliedReport: target={}, stream_id: {}, applied: {}, sending_time: {}",
+                    target,
+                    stream_id,
+                    applied.display(),
+                    sending_time.display(),
                 )
             }
             Self::StateMachine { command_result } => {

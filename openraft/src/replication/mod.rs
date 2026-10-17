@@ -54,6 +54,7 @@ use crate::progress::inflight_id::InflightId;
 use crate::raft::AppendEntriesRequest;
 use crate::raft::StreamAppendError;
 use crate::raft::StreamAppendResult;
+use crate::raft::StreamAppendSuccess;
 use crate::raft_state::IOId;
 use crate::replication::backoff_state::BackoffState;
 use crate::replication::event_watcher::EventWatcher;
@@ -418,7 +419,15 @@ where
             };
 
             match append_res {
-                Ok(matching) => {
+                Ok(StreamAppendSuccess { matching, applied }) => {
+                    // fuse fork: answers come one per request, in order, so this one answers the
+                    // oldest request not yet answered; its report shows what the target had
+                    // applied no earlier than that request was sent.
+                    let answered_sending_time = inflight_queue.take_answered();
+                    if let (Some(applied), Some(sent)) = (applied, answered_sending_time) {
+                        self.replication_context.notify_applied(sent, applied).await;
+                    }
+
                     let last_acked_sending_time = inflight_queue.drain_acked(&matching);
 
                     if let Some(last) = last_acked_sending_time {

@@ -64,6 +64,7 @@ pub use message::WriteResponse;
 pub use message::WriteResult;
 use openraft_macros::since;
 pub use stream_append::StreamAppendResult;
+pub use stream_append::StreamAppendSuccess;
 use tracing::Instrument;
 use tracing::Level;
 use tracing::trace_span;
@@ -613,6 +614,8 @@ where
                     runtime_config: runtime_config.clone(),
                     pre_vote_stats: pre_vote_stats.clone(),
                     pre_vote_base,
+                    replication_applied: Default::default(),
+                    replication_applied_sent: Default::default(),
                     core_state: Default::default(),
                     network_factory: Arc::new(C::mutex(network)),
                     log_store,

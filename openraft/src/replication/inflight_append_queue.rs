@@ -20,6 +20,11 @@ pub(crate) struct InflightAppendQueue<C>
 where C: RaftTypeConfig
 {
     queue: Arc<Mutex<VecDeque<InflightAppend<C>>>>,
+
+    /// The sending time of every request not yet answered, oldest first (fuse fork). A stream
+    /// answers one response per request, in order, while [`Self::drain_acked`] drains
+    /// cumulatively; this says which request an answer belongs to.
+    unanswered: Arc<Mutex<VecDeque<InstantOf<C>>>>,
 }
 
 impl<C> InflightAppendQueue<C>
@@ -28,6 +33,7 @@ where C: RaftTypeConfig
     pub(crate) fn new() -> Self {
         Self {
             queue: Arc::new(Mutex::new(VecDeque::with_capacity(32))),
+            unanswered: Arc::new(Mutex::new(VecDeque::with_capacity(32))),
         }
     }
 
@@ -38,7 +44,14 @@ where C: RaftTypeConfig
 
         tracing::debug!("Inflight queue push: {}", inflight);
 
+        self.unanswered.lock().unwrap().push_back(inflight.sending_time);
         q.push_back(inflight)
+    }
+
+    /// The sending time of the request the next answer belongs to, the oldest not yet answered
+    /// (fuse fork): call once per answer the stream yields.
+    pub(crate) fn take_answered(&self) -> Option<InstantOf<C>> {
+        self.unanswered.lock().unwrap().pop_front()
     }
 
     /// Removes stale requests through the first request at or containing a conflict point and
@@ -116,6 +129,27 @@ mod tests {
     use super::*;
     use crate::engine::testing::UTConfig;
     use crate::engine::testing::log_id;
+
+    /// fuse fork: two requests ending at the same log id are drained by the first answer, but each
+    /// answer still belongs to its own request.
+    #[test]
+    fn test_take_answered_follows_each_request() {
+        let q = InflightAppendQueue::<UTConfig>::new();
+        q.push(Some(log_id(1, 1, 0)), Some(log_id(1, 1, 10)));
+        q.push(Some(log_id(1, 1, 10)), Some(log_id(1, 1, 10)));
+        let (t0, t1) = {
+            let mut queue = q.queue.lock().unwrap();
+            queue[1].sending_time = queue[0].sending_time + std::time::Duration::from_secs(1);
+            (queue[0].sending_time, queue[1].sending_time)
+        };
+        q.unanswered.lock().unwrap()[1] = t1;
+
+        assert_eq!(q.take_answered(), Some(t0));
+        assert_eq!(q.drain_acked(&Some(log_id(1, 1, 10))), Some(t1), "the leader clock takes the last acked");
+        assert_eq!(q.take_answered(), Some(t1), "the second answer is the second request's");
+        assert_eq!(q.drain_acked(&Some(log_id(1, 1, 10))), None);
+        assert_eq!(q.take_answered(), None);
+    }
 
     #[test]
     fn test_new() {

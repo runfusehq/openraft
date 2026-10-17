@@ -22,6 +22,7 @@ use openraft::network::NetVote;
 use openraft::network::RPCOption;
 use openraft::raft::StreamAppendError;
 use openraft::raft::StreamAppendResult;
+use openraft::raft::StreamAppendSuccess;
 use openraft::raft::TransferLeaderRequest;
 use openraft::raft::TransferLeaderResponse;
 use tonic::transport::Channel;
@@ -91,7 +92,8 @@ impl NetworkConnection {
             return Ok(Err(StreamAppendError::Conflict(conflict_log_id.into())));
         }
 
-        Ok(Ok(resp.last_log_id.map(Into::into)))
+        // This example's protobuf carries no applied report (fuse fork).
+        Ok(Ok(StreamAppendSuccess::matching(resp.last_log_id.map(Into::into))))
     }
 
     /// Sends snapshot data in chunks through the provided channel.

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -215,6 +216,22 @@ pub struct RaftMetrics<C: RaftTypeConfig> {
     // ---
     /// The replication states. It is Some() only when this node is leader.
     pub replication: Option<ReplicationMetrics<C>>,
+
+    /// For a leader, each target's last applied log id, as its latest answer to an append or a
+    /// heartbeat reported it (fuse fork): a follower's publish watermark. `None` inside means the
+    /// target has applied nothing yet. The report is taken when the target accepts the entries
+    /// (it answers once they are flushed), before it applies what that append committed, so it
+    /// trails by up to one round. `None` when this
+    /// node is not leader; a target is absent until it reports.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub replication_applied: Option<BTreeMap<C::NodeId, Option<LogIdOf<C>>>>,
+
+    /// For a leader, when it sent the request whose answer carried each target's
+    /// [`replication_applied`](Self::replication_applied) report (fuse fork): the report shows what
+    /// the target had applied no earlier than this instant, so a reader measures a target's lag up
+    /// to it rather than up to when it reads the report. `None` when this node is not leader.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub replication_applied_sent: Option<BTreeMap<C::NodeId, SerdeInstantOf<C>>>,
 }
 
 impl<C> fmt::Display for RaftMetrics<C>
@@ -296,6 +313,8 @@ where C: RaftTypeConfig
             membership_config: Arc::new(StoredMembershipOf::<C>::default()),
             committed_membership_config: Arc::new(StoredMembershipOf::<C>::default()),
             replication: None,
+            replication_applied: None,
+            replication_applied_sent: None,
             heartbeat: None,
         }
     }

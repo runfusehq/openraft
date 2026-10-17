@@ -7,6 +7,7 @@ use openraft::Config;
 use openraft::Vote;
 use openraft::raft::AppendEntriesRequest;
 use openraft::raft::StreamAppendError;
+use openraft::raft::StreamAppendSuccess;
 use openraft::raft::VoteRequest;
 use openraft::testing::blank_ent;
 
@@ -62,10 +63,16 @@ async fn stream_append_success() -> Result<()> {
     let output_stream = pin!(raft.stream_append(input_stream));
 
     let results: Vec<_> = output_stream.collect().await;
+    // fuse fork: each answer reports what node 0 had applied when it took the entries: nothing,
+    // since the only commit (index 4) arrives with the last request and is applied after it.
+    let nothing_applied = |matching| StreamAppendSuccess {
+        matching: Some(matching),
+        applied: Some(None),
+    };
     assert_eq!(results, vec![
-        Ok(Ok(Some(log_id(1, 1, 1)))),
-        Ok(Ok(Some(log_id(1, 1, 3)))),
-        Ok(Ok(Some(log_id(1, 1, 4)))),
+        Ok(Ok(nothing_applied(log_id(1, 1, 1)))),
+        Ok(Ok(nothing_applied(log_id(1, 1, 3)))),
+        Ok(Ok(nothing_applied(log_id(1, 1, 4)))),
     ]);
 
     Ok(())
@@ -120,7 +127,10 @@ async fn stream_append_conflict() -> Result<()> {
 
     let results: Vec<_> = output_stream.collect().await;
     assert_eq!(results, vec![
-        Ok(Ok(Some(log_id(1, 1, 1)))),
+        Ok(Ok(StreamAppendSuccess {
+            matching: Some(log_id(1, 1, 1)),
+            applied: Some(None),
+        })),
         Ok(Err(StreamAppendError::Conflict(log_id(1, 1, 5)))),
     ]);
 

@@ -138,6 +138,9 @@ pub enum BlockOperation {
     DelayBuildingSnapshot,
     BuildSnapshot,
     PurgeLog,
+    /// Delay applying entries to the state machine (fuse fork): a node stays at what it had
+    /// applied, while its log and the raft core move on.
+    DelayApply,
 }
 
 /// Block operations for testing purposes.
@@ -539,6 +542,11 @@ impl RaftStateMachine<TypeConfig> for Arc<MemStateMachine> {
     async fn apply<Strm>(&mut self, mut entries: Strm) -> Result<(), io::Error>
     where Strm: Stream<Item = Result<EntryResponder<TypeConfig>, io::Error>> + Unpin + OptionalSend {
         use futures::TryStreamExt;
+
+        if let Some(d) = self.block.get_blocking(&BlockOperation::DelayApply) {
+            tracing::info!(?d, "delay apply");
+            TypeConfig::sleep(d).await;
+        }
 
         let mut sm = self.sm.write().await;
 
