@@ -27,10 +27,20 @@ fn test_is_initialized() {
         assert_eq!(false, rs.is_initialized());
     }
 
-    // Vote is non-default value
+    // Fuse fork: a vote granted to a candidate, with an empty log, is not initialized
     {
         let rs = RaftState::<UTConfig> {
             vote: Leased::new(UTConfig::<()>::now(), Duration::from_millis(500), Vote::new(1, 2)),
+            ..Default::default()
+        };
+
+        assert_eq!(false, rs.is_initialized());
+    }
+
+    // A committed vote: a leader was established
+    {
+        let rs = RaftState::<UTConfig> {
+            vote: Leased::new(UTConfig::<()>::now(), Duration::from_millis(500), Vote::new_committed(1, 2)),
             ..Default::default()
         };
 

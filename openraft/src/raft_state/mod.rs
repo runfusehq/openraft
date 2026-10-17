@@ -48,7 +48,6 @@ use crate::raft_state::io_state::log_io_id::LogIOId;
 use crate::type_config::alias::InstantOf;
 use crate::type_config::alias::LogIdOf;
 use crate::type_config::alias::MembershipStateOf;
-use crate::type_config::alias::TermOf;
 use crate::type_config::alias::VoteOf;
 use crate::vote::RaftLeaderId;
 use crate::vote::RaftVote;
@@ -235,8 +234,10 @@ where C: RaftTypeConfig
             return true;
         }
 
-        // If it received a request-vote from other node, it is already initialized.
-        if self.vote_ref().leader_id().term() != TermOf::<C>::default() {
+        // Fuse fork: only a committed vote means a leader was established, so the node is
+        // already initialized. A vote granted to a candidate, with an empty log, does not: see
+        // `Engine::initialize`.
+        if self.vote_ref().is_committed() {
             return true;
         }
 

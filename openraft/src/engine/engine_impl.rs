@@ -224,13 +224,24 @@ where
     /// Initialize a node by appending the first log.
     ///
     /// - The first log has to be membership config log.
-    /// - The node has to contain no logs at all and the vote is the minimal value. See: [Conditions
-    ///   for initialization][precondition].
+    /// - The node has to contain no logs at all and its vote must not be committed. See:
+    ///   [Conditions for initialization][precondition].
     ///
     ///
     /// Appending the very first log is slightly different from appending log by a leader or
     /// follower. This step is not confined by the consensus protocol and has to be dealt with
     /// differently.
+    ///
+    /// Fuse fork: every member writes the same first log id, `((0, lowest voter), 0)`. Under
+    /// advanced leader ids upstream writes `((0, self), 0)`, which differs on every member.
+    ///
+    /// Fuse fork: a node whose log is empty may initialize while it holds a granted, uncommitted
+    /// vote `(T, c)` with `T > 0`. It keeps that vote rather than writing `(0, self)`, which would
+    /// regress it, and the election that follows initialize campaigns at `(T+1, self)`. The
+    /// node's vote therefore never decreases. Its only entry below the vote is index 0, whose
+    /// payload and log id are identical on every member. Before this, such a member refused to
+    /// initialize, so a group whose lowest member was lost after the others granted its vote
+    /// could never form.
     ///
     /// [precondition]: crate::docs::cluster_control::cluster_formation#preconditions-for-initialization
     #[tracing::instrument(level = "debug", skip_all)]
@@ -239,16 +250,34 @@ where
 
         self.check_members_contain_me(&membership)?;
 
-        // FollowingHandler requires vote to be committed.
-        let leader_id = LeaderIdOf::<C>::new(TermOf::<C>::default(), self.config.id.clone());
-        let vote = <VoteOf<C> as RaftVote>::from_leader_id(leader_id.clone(), true);
-        self.state.vote.update(C::now(), Duration::default(), vote);
-
-        // The very first log id
-        let log_id = LogIdOf::<C>::new(leader_id.to_committed(), 0);
+        // The very first log id, identical on every member initialized with the same membership.
+        // Safe unwrap(): the membership contains this node.
+        let first_leader = membership.voter_ids().next().unwrap();
+        let log_id = LogIdOf::<C>::new(LeaderIdOf::<C>::new(TermOf::<C>::default(), first_leader).to_committed(), 0);
         let payload = C::Payload::membership(membership);
         let entry = C::Entry::new(log_id, payload);
-        self.following_handler().do_append_entries(vec![entry]);
+
+        if self.state.vote_ref().term() == TermOf::<C>::default() {
+            // FollowingHandler requires vote to be committed.
+            let leader_id = LeaderIdOf::<C>::new(TermOf::<C>::default(), self.config.id.clone());
+            let vote = <VoteOf<C> as RaftVote>::from_leader_id(leader_id, true);
+            self.state.vote.update(C::now(), Duration::default(), vote);
+
+            self.following_handler().do_append_entries(vec![entry]);
+        } else {
+            // A granted vote `(T, c)`: keep it. The append's I/O is labeled with that vote, the
+            // greatest the I/O progress has accepted, so the progress stays monotonic; the
+            // `SaveVote` of the `(T+1, self)` campaign that follows orders after it.
+            debug_assert!(!self.state.vote_ref().is_committed());
+
+            FollowingHandler {
+                leader_vote: self.state.vote_ref().to_committed(),
+                config: &mut self.config,
+                state: &mut self.state,
+                output: &mut self.output,
+            }
+            .do_append_entries(vec![entry]);
+        }
 
         Ok(())
     }
@@ -978,8 +1007,8 @@ where
 
     /// Check if a raft node is in a state that allows to initialize.
     ///
-    /// It is allowed to initialize only when `last_log_id.is_none()` and `vote==(term=0,
-    /// node_id=0)`. See: [Conditions for initialization](https://databendlabs.github.io/openraft/cluster-formation.html#conditions-for-initialization)
+    /// It is allowed to initialize only when `last_log_id.is_none()` and the vote is not committed
+    /// (fuse fork: a granted vote does not block initialization). See: [Conditions for initialization](https://databendlabs.github.io/openraft/cluster-formation.html#conditions-for-initialization)
     fn check_initialize(&self) -> Result<(), NotAllowed<C>> {
         if !self.state.is_initialized() {
             return Ok(());

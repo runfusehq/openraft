@@ -37,7 +37,7 @@ may lead to a split-brain condition and must be avoided.
 ### Errors and Failures
 
 - If this method is called on a node that has already been initialized, it will simply return an error and remain safe,
-  i.e., if `last_log_id` on this node is not `None`, or `vote` on this node is not `(0,0)`.
+  i.e., if `last_log_id` on this node is not `None`, or `vote` on this node is committed.
 
 ### Preconditions for Initialization
 
@@ -58,6 +58,35 @@ This must not violate the commit condition:
 
 For these two reasons, appending the first log is only allowed if:
 `vote==(0,0)`. This is why the initial value of `vote` must be `(0,0)`.
+
+### Fuse fork: the canonical first log id, and initializing after a granted vote
+
+The fork changes two things.
+
+**Every member writes the same first log id**: `((term=0, node_id=lowest voter), 0)`. With
+advanced leader ids there is no `LeaderId::default()` for an arbitrary node id type, and
+upstream writes `((0, self), 0)`, which differs on every member. Every member initialized with
+the same membership writes an identical index-0 entry, and that id is below every log id of
+term 1 or later, so rule 1 holds.
+
+**A node with an empty log may initialize while it holds a granted, uncommitted vote
+`(T, c)`.** Without this, a group whose members granted a candidate's vote can never form once
+that candidate is lost before its first entry reaches them: every survivor refuses to
+initialize, and a node without membership never campaigns. Such a node keeps its vote, appends
+the index-0 entry, and campaigns at `(T+1, self)`. A committed vote still refuses: a leader was
+established.
+
+Why it is safe:
+
+- **The vote never decreases.** It goes from the granted `(T, c)` straight to `(T+1, self)`.
+  Writing `(0, self)`, or even `(T, self)` when `self < c`, would regress it.
+- **No committed entry is contradicted.** The log was empty, so nothing is overwritten, and the
+  only entry appended is index 0, identical on every member. In a group of 3 voters, two members
+  with empty logs also prove nothing past index 0 was ever committed.
+- **Up-to-date checks are unchanged.** A log holding only the index-0 entry is the smallest
+  non-empty log, so a member holding any entry of term 1 or later never grants it a vote.
+- **The departure from rule 2 is narrow.** The one entry appended below the vote is index 0,
+  with an identical payload and log id on every member.
 
 [`Raft::initialize()`]: `crate::Raft::initialize`
 [`Raft::new()`]:        `crate::Raft::new`

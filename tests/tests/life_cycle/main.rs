@@ -8,6 +8,7 @@ mod fixtures;
 // The later tests may depend on the earlier ones.
 
 mod t10_initialization;
+mod t10_initialize_after_granted_vote;
 mod t11_shutdown;
 mod t12_build_run;
 mod t50_follower_restart_does_not_interrupt;
