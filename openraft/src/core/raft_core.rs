@@ -2133,11 +2133,14 @@ where
                 applied,
                 sending_time,
             } => {
-                // fuse fork: the latest report stands, lower or not (a target that restarted from
-                // an older state reports less than it did). A target that has applied nothing
+                // fuse fork: the latest sample stands, lower or not (a target that restarted from
+                // an older state reports less than it did). Heartbeats and appends answer on
+                // separate streams, so an older sample can arrive after a newer one: it is dropped,
+                // and the recorded send time never goes back. A target that has applied nothing
                 // reports `None` and is recorded so, with when it was sampled: absent reads as
                 // unheard. Only this leader's current streams count.
-                if self.engine.leader.as_ref().is_some_and(|l| l.is_replication_stream_valid(&target, stream_id)) {
+                let newer = self.replication_applied_sent.get(&target).is_none_or(|recorded| sending_time >= *recorded);
+                if newer && self.engine.leader.as_ref().is_some_and(|l| l.is_replication_stream_valid(&target, stream_id)) {
                     self.replication_applied.insert(target.clone(), applied);
                     self.replication_applied_sent.insert(target, sending_time);
                 }
