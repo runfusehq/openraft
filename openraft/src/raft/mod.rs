@@ -1434,6 +1434,7 @@ where
             app_data,
             responder: None,
             expected_leader: None,
+            expected_index: None,
         }
     }
 

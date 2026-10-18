@@ -48,6 +48,7 @@ where C: RaftTypeConfig
     pub(in crate::raft) app_data: C::D,
     pub(in crate::raft) responder: Option<CoreResponder<C>>,
     pub(in crate::raft) expected_leader: Option<CommittedLeaderIdOf<C>>,
+    pub(in crate::raft) expected_index: Option<u64>,
 }
 
 impl<'a, C> WriteRequest<'a, C>
@@ -128,6 +129,20 @@ where C: RaftTypeConfig
         self.expected_leader = Some(expected_leader.into());
         self
     }
+
+    /// Require the entry to be appended at log index `index` (fuse fork).
+    ///
+    /// The leader checks it when it assigns the entry's log id: an entry that would land at any
+    /// other index is refused with [`PreconditionFailed::NextLogIndexMismatch`], never appended.
+    /// A caller that names each entry by the index it was cut for (one entry per index) uses it
+    /// so that an entry queued behind a refused one cannot take the refused one's index.
+    ///
+    /// [`PreconditionFailed::NextLogIndexMismatch`]: `crate::errors::PreconditionFailed::NextLogIndexMismatch`
+    #[since(version = "0.10.0")]
+    pub fn at_index(mut self, index: u64) -> Self {
+        self.expected_index = Some(index);
+        self
+    }
 }
 
 impl<'a, C> IntoFuture for WriteRequest<'a, C>
@@ -143,6 +158,7 @@ where C: RaftTypeConfig
                     payloads: Batch::of([C::Payload::normal(self.app_data)]),
                     responders: Batch::of([self.responder]),
                     expected_leader: self.expected_leader,
+                    expected_indexes: Batch::of([self.expected_index]),
                     #[cfg(feature = "runtime-stats")]
                     proposed_at: propose_at_now::<C>(),
                 })

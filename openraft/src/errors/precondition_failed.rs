@@ -44,4 +44,11 @@ where C: RaftTypeConfig
         expected: Option<LogIdOf<C>>,
         actual: Option<LogIdOf<C>>,
     },
+
+    /// A write required to be appended at log index `expected`, but the leader would append it
+    /// at `actual` (fuse fork; see [`WriteRequest::at_index`]). It is refused, not appended.
+    ///
+    /// [`WriteRequest::at_index`]: `crate::raft::WriteRequest::at_index`
+    #[error("next log index mismatch: expected: {expected}, actual: {actual}")]
+    NextLogIndexMismatch { expected: u64, actual: u64 },
 }

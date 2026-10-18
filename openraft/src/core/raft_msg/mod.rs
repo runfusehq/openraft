@@ -81,6 +81,12 @@ where C: RaftTypeConfig
         payloads: BatchOf<C, PayloadOf<C>>,
         responders: BatchOf<C, Option<CoreResponder<C>>>,
         expected_leader: Option<CommittedLeaderIdOf<C>>,
+        /// Per payload, the log index it must be appended at, if any: a payload that would get
+        /// another index is refused with [`PreconditionFailed::NextLogIndexMismatch`] (fuse
+        /// fork).
+        ///
+        /// [`PreconditionFailed::NextLogIndexMismatch`]: `crate::errors::PreconditionFailed::NextLogIndexMismatch`
+        expected_indexes: BatchOf<C, Option<u64>>,
         #[cfg(feature = "runtime-stats")]
         proposed_at: InstantOf<C>,
     },

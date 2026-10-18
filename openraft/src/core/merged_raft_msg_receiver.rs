@@ -188,13 +188,14 @@ where C: RaftTypeConfig
     async fn merge_client_writes(&mut self, msg: &mut RaftMsg<C>) -> Result<(), Fatal<C>> {
         debug_assert!(self.buffered.is_none());
 
-        let (batch_payloads, batch_responders, batch_leader) = match msg {
+        let (batch_payloads, batch_responders, batch_leader, batch_indexes) = match msg {
             RaftMsg::ClientWrite {
                 payloads,
                 responders,
                 expected_leader,
+                expected_indexes,
                 ..
-            } => (payloads, responders, expected_leader),
+            } => (payloads, responders, expected_leader, expected_indexes),
             _ => return Ok(()),
         };
 
@@ -219,10 +220,14 @@ where C: RaftTypeConfig
 
             match next {
                 RaftMsg::ClientWrite {
-                    payloads, responders, ..
+                    payloads,
+                    responders,
+                    expected_indexes,
+                    ..
                 } => {
                     batch_payloads.extend(payloads);
                     batch_responders.extend(responders);
+                    batch_indexes.extend(expected_indexes);
                 }
                 _ => unreachable!(),
             }
@@ -262,6 +267,7 @@ mod tests {
             payloads: Batch::of([EntryPayload::Normal(data)]),
             responders: Batch::of([None]),
             expected_leader: leader,
+            expected_indexes: Batch::of([None]),
             #[cfg(feature = "runtime-stats")]
             proposed_at: C::now(),
         }
