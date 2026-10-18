@@ -94,11 +94,13 @@ where C: RaftTypeConfig
         payloads: BatchOf<C, PayloadOf<C>>,
         responders: BatchOf<C, Option<CoreResponder<C>>>,
     ) -> Result<(), Fatal<C>> {
+        let payloads_len = payloads.len();
         self.inner
             .send_msg(RaftMsg::ClientWrite {
                 payloads,
                 responders,
                 expected_leader: None,
+                expected_indexes: BatchOf::<C, _>::of(std::iter::repeat_n(None, payloads_len)),
                 #[cfg(feature = "runtime-stats")]
                 proposed_at: propose_at_now::<C>(),
             })

@@ -639,6 +639,60 @@ where
         Ok(lh)
     }
 
+    /// [`Self::write_entries`] for client writes that may each require the log index they are
+    /// appended at (`expected_indexes`, one per payload; fuse fork).
+    ///
+    /// Checked here, on the leader, in the same call that assigns the log ids: walking the
+    /// payloads in order, a payload whose required index is not the one it would get is refused
+    /// with [`PreconditionFailed::NextLogIndexMismatch`] and takes no index, so each later
+    /// payload is checked against the index it would really get. A node that does not lead, or
+    /// whose lease expired, refuses every payload as [`Self::write_entries`] does.
+    pub(crate) fn write_entries_at(
+        &mut self,
+        payloads: BatchOf<C, PayloadOf<C>>,
+        responders: BatchOf<C, Option<CoreResponder<C>>>,
+        expected_indexes: BatchOf<C, Option<u64>>,
+        #[cfg(feature = "runtime-stats")] proposed_at: InstantOf<C>,
+    ) -> Option<LeaderLogIds<CommittedLeaderIdOf<C>>> {
+        let checked = expected_indexes.as_ref().iter().any(Option::is_some);
+        let next = self.engine.try_leader_handler().ok().map(|lh| lh.leader.last_log_id().cloned().next_index());
+        let (payloads, responders) = match next {
+            Some(mut next) if checked && self.ensure_writable_leader_handler().is_ok() => {
+                let mut kept_payloads = Vec::with_capacity(payloads.len());
+                let mut kept_responders = Vec::with_capacity(payloads.len());
+                for ((payload, responder), expected) in payloads.into_iter().zip(responders).zip(expected_indexes) {
+                    match expected {
+                        Some(expected) if expected != next => {
+                            let err = ClientWriteError::PreconditionFailed(PreconditionFailed::NextLogIndexMismatch {
+                                expected,
+                                actual: next,
+                            });
+                            if let Some(tx) = responder {
+                                tx.on_complete(Err(err));
+                            }
+                        }
+                        _ => {
+                            kept_payloads.push(payload);
+                            kept_responders.push(responder);
+                            next += 1;
+                        }
+                    }
+                }
+                if kept_payloads.is_empty() {
+                    return None;
+                }
+                (BatchOf::<C, _>::of(kept_payloads), BatchOf::<C, _>::of(kept_responders))
+            }
+            _ => (payloads, responders),
+        };
+        self.write_entries(
+            payloads,
+            responders,
+            #[cfg(feature = "runtime-stats")]
+            proposed_at,
+        )
+    }
+
     /// Write log entries to the cluster through raft protocol.
     ///
     /// I.e.: append the log entries to local store, forward them to a quorum(including the
@@ -1817,6 +1871,7 @@ where
                 payloads,
                 responders,
                 expected_leader,
+                expected_indexes,
                 #[cfg(feature = "runtime-stats")]
                 proposed_at,
             } => {
@@ -1837,9 +1892,10 @@ where
                     }
                 }
                 self.runtime_stats.write_batch.record(payloads.len() as u64);
-                self.write_entries(
+                self.write_entries_at(
                     payloads,
                     responders,
+                    expected_indexes,
                     #[cfg(feature = "runtime-stats")]
                     proposed_at,
                 );
