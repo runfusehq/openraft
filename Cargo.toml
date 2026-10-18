@@ -25,7 +25,7 @@ chrono             = { version = "0.4" }
 clap               = { version = "4.1.11", features = ["derive", "env"] }
 criterion          = { version = "0.8.2", features = ["html_reports"] }
 derive_more        = { version = "2.1.1", features = ["std", "from", "try_into", "display"] }
-display-more       = { version = "0.2.6" }
+display-more       = { version = "0.2.6", path = "display-more" }
 itertools          = { version = "0.15" }
 futures            = { version = "0.3" }
 futures-channel    = { version = "0.3" }
@@ -76,6 +76,7 @@ resolver = "3"
 members = [
     "rt",
     "openraft",
+    "display-more",
     "legacy",
     "macros",
     "tests",

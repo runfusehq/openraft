@@ -1,0 +1,24 @@
+# display-more 0.2.6 (crates.io, Apache-2.0) vendored by the fuse fork without
+# its chrono-tz dependency: no line of the crate uses chrono-tz, and as a plain
+# dependency it put chrono-tz, its build-time timezone codegen and phf into
+# every openraft user's build.
+[package]
+name = "display-more"
+description = "helper to display various types"
+version = "0.2.6"
+authors = ["Databend Authors <opensource@datafuselabs.com>"]
+license = "Apache-2.0"
+edition = "2021"
+repository = "https://github.com/drmingdrmer/display-more"
+homepage = "https://github.com/drmingdrmer/display-more"
+documentation = "https://docs.rs/display-more"
+readme = "README.md"
+keywords = ["display", "formatting", "helper", "option", "slice"]
+categories = ["rust-patterns", "value-formatting"]
+
+[features]
+
+[dependencies]
+chrono = { version = "0.4.31", features = ["serde"] }
+
+[dev-dependencies]
