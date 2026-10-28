@@ -193,6 +193,9 @@ pub struct MemLogStore {
 
     /// When set to true, the next `limited_get_log_entries` call will return an IO error.
     pub fail_next_limited_get: AtomicBool,
+
+    /// Calls to `append` (fuse fork): how many log writes the entries took.
+    pub append_count: AtomicU64,
 }
 
 impl MemLogStore {
@@ -208,7 +211,13 @@ impl MemLogStore {
             vote: RwLock::new(None),
             return_empty_limited_get: AtomicBool::new(false),
             fail_next_limited_get: AtomicBool::new(false),
+            append_count: AtomicU64::new(0),
         }
+    }
+
+    /// Get and reset the count of `append` calls (fuse fork).
+    pub fn take_append_count(&self) -> u64 {
+        self.append_count.swap(0, Ordering::Relaxed)
     }
 
     /// Set whether `limited_get_log_entries` should return empty results.
@@ -466,6 +475,7 @@ impl RaftLogStorage<TypeConfig> for Arc<MemLogStore> {
     #[tracing::instrument(level = "trace", skip_all)]
     async fn append<I>(&mut self, entries: I, callback: IOFlushed<TypeConfig>) -> Result<(), io::Error>
     where I: IntoIterator<Item = EntryOf<TypeConfig>> + OptionalSend {
+        self.append_count.fetch_add(1, Ordering::Relaxed);
         let mut log = self.log.write().await;
         for entry in entries {
             let s =

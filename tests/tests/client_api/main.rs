@@ -9,6 +9,7 @@ mod fixtures;
 
 mod t10_client_write_many;
 mod t10_client_write_at_index;
+mod t10_client_write_batch;
 mod t10_client_write_quorum_lease;
 mod t10_client_writes;
 mod t11_client_reads;

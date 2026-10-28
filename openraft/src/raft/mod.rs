@@ -59,6 +59,7 @@ pub use message::TransferLeaderRequest;
 pub use message::TransferLeaderResponse;
 pub use message::VoteRequest;
 pub use message::VoteResponse;
+pub use message::WriteBatch;
 pub use message::WriteRequest;
 pub use message::WriteResponse;
 pub use message::WriteResult;
@@ -1435,6 +1436,22 @@ where
             responder: None,
             expected_leader: None,
             expected_index: None,
+        }
+    }
+
+    /// Submit a group of writes to Raft as one message (fuse fork).
+    ///
+    /// Returns an empty [`WriteBatch`]; [`push`](WriteBatch::push) each entry, then await it.
+    /// The leader appends the whole group in one log write, each entry answered through its own
+    /// responder.
+    #[since(version = "0.10.0")]
+    pub fn write_batch(&self) -> WriteBatch<'_, C> {
+        WriteBatch {
+            inner: &self.inner,
+            payloads: Vec::new(),
+            responders: Vec::new(),
+            expected_leader: None,
+            expected_indexes: Vec::new(),
         }
     }
 
