@@ -305,3 +305,40 @@ fn test_startup_leader_removed_from_effective_membership() {
         }
     }
 }
+
+/// fuse fork: a restarted follower holds a committed vote's refusal to elect for a whole leader
+/// lease from restart, as it would have had it stayed up: the Leader it acknowledged may still
+/// serve reads on that lease. A vote that was never committed holds none.
+#[test]
+fn test_startup_restores_the_leader_lease_of_a_committed_vote() -> anyhow::Result<()> {
+    let lease = Duration::from_millis(500);
+    let now = UTConfig::<()>::now();
+
+    let mut committed = eng();
+    committed.config.timer_config.leader_lease = lease;
+    committed.state.vote = Leased::new(now, Duration::default(), Vote::new_committed(2, 1));
+    committed.startup();
+    let at = UTConfig::<()>::now();
+    assert!(!committed.state.vote.is_expired(at, Duration::ZERO), "the refusal holds after a restart");
+    assert!(committed.state.vote.is_expired(at + lease + Duration::from_millis(1), Duration::ZERO), "for one lease");
+
+    let mut uncommitted = eng();
+    uncommitted.config.timer_config.leader_lease = lease;
+    uncommitted.state.vote = Leased::new(now, Duration::default(), Vote::new(2, 1));
+    uncommitted.startup();
+    assert!(uncommitted.state.vote.is_expired(UTConfig::<()>::now() + Duration::from_millis(1), Duration::ZERO), "no refusal to restore");
+
+    // A restarted Leader demotes itself and keeps none: the lease was its own.
+    let mut leader = eng();
+    leader.config.enable_leader_restore = false;
+    leader.config.timer_config.leader_lease = lease;
+    leader.state.membership_state.set_effective(Arc::new(StoredMembershipOf::<UTConfig>::new(
+        Some(log_id(1, 1, 3)),
+        m23(),
+    )));
+    leader.state.vote = Leased::new(now, Duration::default(), Vote::new_committed(2, 2));
+    leader.startup();
+    assert!(!leader.state.vote.is_committed(), "demoted");
+    assert!(leader.state.vote.is_expired(UTConfig::<()>::now() + Duration::from_millis(1), Duration::ZERO));
+    Ok(())
+}

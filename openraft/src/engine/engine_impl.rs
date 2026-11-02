@@ -204,6 +204,14 @@ where
                 self.state.vote.update(C::now(), Duration::default(), uncommitted);
                 debug_assert!(!self.state.is_leader(&self.config.id))
             }
+        } else if self.state.vote.is_committed() {
+            // fuse fork: a follower's refusal to elect lives in memory, and a Leader's read lease
+            // rests on it: before this restart the node may have acknowledged a Leader whose
+            // lease still runs. Hold that refusal for a whole leader lease from restart, the
+            // longest such a lease can outlast it, which also defers this node's own campaign.
+            // A restarted Leader above keeps no refusal: the lease it would protect was its own.
+            let lease = self.config.timer_config.leader_lease;
+            self.state.vote.touch(C::now(), lease);
         }
 
         let server_state = if self.state.membership_state.effective().is_voter(&self.config.id) {

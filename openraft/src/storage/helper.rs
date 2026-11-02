@@ -227,10 +227,7 @@ where
             //
             // [precondition]: crate::docs::cluster_control::cluster_formation#preconditions-for-initialization
             //
-            // TODO: If the lease reverted upon restart,
-            //       the lease based linearizable read consistency will be broken.
-            //       When lease based read is added, the restarted node must sleep for a while,
-            //       before serving.
+            // The lease is restored by `Engine::startup`, which knows `leader_lease`.
             vote: Leased::new(now, Duration::default(), vote),
             log_ids: log_id_list,
             membership_state: mem_state,
